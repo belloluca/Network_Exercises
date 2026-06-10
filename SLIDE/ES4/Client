@@ -1,0 +1,90 @@
+#include <iostream>
+#include <string>
+#include <cstring>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <thread>
+
+using namespace std;
+
+#define PORT 8080
+#define BUFFER 1024
+
+void sendMsg(int socket){
+
+    string msg;
+
+    while (true){
+
+        cout << "> ";
+        getline(cin, msg);
+        cout.flush();
+
+        if ((send(socket, msg.c_str(), msg.size(), 0)) < 0){
+            perror("Errore nell'invio dei dati\n");
+            return;
+        }
+
+        if (msg == "QUIT"){
+            cout << "Disconessione...\n";
+            close(socket);
+            break;
+        }
+
+    }
+
+}
+
+void recvMsg(int socket){
+
+    while (true){
+
+        char buffer[BUFFER];
+        int n;
+
+        n = recv(socket, buffer, BUFFER, 0);
+        if (n < 0){
+            perror("Errore nella ricezione dei dati\n");
+            return;
+        }
+        buffer[n] = '\0';
+
+        cout << "Messaggio ricevuto: " << buffer << endl;
+        cout.flush();
+
+    }
+
+}
+
+int main(){
+
+    int sockfd;
+    struct sockaddr_in server_addr;
+    socklen_t len = sizeof(server_addr);
+
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0){
+        perror("Errore nella socket\n");
+        return -1;
+    }
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr);
+
+    if((connect(sockfd, (struct sockaddr*)&server_addr, len)) < 0){
+        perror("Errore nella connessione con il server\n");
+        return -1;
+    }
+    cout << "Client connesso al server...\n";
+
+    thread ricezione(recvMsg, sockfd);
+    thread invio(sendMsg, sockfd);
+
+    ricezione.join();
+    invio.join();
+
+}
