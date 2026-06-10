@@ -1,0 +1,76 @@
+#include <iostream>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <string>
+#include <cstring>
+#include <time.h>
+
+#define BUFFER 1024
+#define PORT 8080
+
+using namespace std;
+
+void sendMsg(int socket, string const msg, sockaddr_in server_addr){
+
+    if ((sendto(socket, msg.c_str(), msg.size(), 0, (struct sockaddr*)&server_addr, sizeof(server_addr))) < 0){
+        perror("Errore nell'invio dei dati\n");
+        return;
+    }
+
+}
+
+void function(int socket, sockaddr_in server_addr, string id){
+
+    while (true){
+
+        string status = rand() % 2 ? "FREE" : "OCCUPIED";
+        int time;
+        if (status == "FREE"){
+            time = 0;
+        }else{
+            time = rand() % 60;
+        }
+        int battery = rand() % 100;
+
+        sendMsg(socket, "Sensore " + id + ":" + " stato: " + status + " | tempo utilizzato: " + to_string(time) + " | Batteria: " + to_string(battery), server_addr);
+        cout << "Messaggio inviato: " << "Sensore " + id + ":" + " stato: " + status + " | tempo utilizzato: " << time << " | Batteria: " << battery << endl;
+
+        sleep(3);
+
+
+    }
+
+}
+
+int main(){
+
+    srand(time(0));
+
+    int sockfd;
+    struct sockaddr_in server_addr; 
+    socklen_t len = sizeof(server_addr);
+
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0){
+        perror("Errore nella socket\n");
+        return -1;
+    }
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr);
+
+    string id;
+    cout << "Inserisci l'id del sensore: ";
+    cin >> id;
+    cout << endl;
+
+    function(sockfd, server_addr, id);
+
+    close(sockfd);
+    return 0;
+
+}
