@@ -1,0 +1,166 @@
+#include <iostream>
+#include <cstring>
+#include <string>
+#include <unistd.h>
+#include <stdlib.h>
+#include <thread>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <time.h>
+
+using namespace std;
+
+#define PORT 8080
+#define BUFFER 1024
+
+void sendMsg(int socket, string const msg){
+
+    if ((send(socket, msg.c_str(), msg.size(), 0)) < 0){
+        perror("Errore nell'invio dei dati\n");
+        return;
+    }
+
+}
+
+bool recvMsg(int socket){
+
+    char buffer[BUFFER];
+    int n = recv(socket, buffer, BUFFER - 1, 0);
+    if (n <= 0){
+        perror("Errore nella ricezione dei dati");
+        return true;
+    }
+    buffer[n] = '\0';
+
+    if (string(buffer) == "STOP_ALARM")
+        return false;
+    
+    return true;
+
+}
+
+string Status(){
+
+    int m = rand() % 4;
+    string status;
+
+    if (m == 0){
+        status = "OPEN";
+    }
+    else if (m == 1){
+        status = "CLOSED";
+    }
+    else if (m == 2){
+        status = "DETECTED";
+    }
+    else if (m == 3){
+        status = "NOT_DETECTED";
+    }
+
+    return status;
+
+}
+
+string Element(){
+
+    int n = rand() % 3;
+    string element;
+
+    if (n == 0){
+        element = "DOOR";
+    }
+    else if (n == 1){
+        element = "WINDOW";
+    }
+    else if (n == 2){
+        element = "MOTION";
+    }
+
+    return element;
+
+}
+
+bool AlarmControl(string const element, string const status){
+
+    if (element == "DOOR" && status == "OPEN")
+        return true;
+    if (element == "WINDOW" && status == "OPEN")
+        return true;
+    if (element == "MOTION" && status == "DETECTED")
+        return true;
+    
+    return false;
+
+} 
+
+void function(int socket, string ID){
+
+    string receive, msg;
+    bool alarm = true;
+
+    while (true){
+
+        sleep(3);
+
+        string element = Element();
+        string status = Status();
+
+        msg = "Sensore " + ID + "-" + element + ": " + status;
+        cout << "Messaggio inviato --> " + element + ": " + status << endl; 
+        sendMsg(socket, msg);
+
+        alarm = AlarmControl(element, status);
+
+        while (alarm){
+
+            cout << "Modalità ALARM attivata" << endl;
+            alarm = recvMsg(socket);
+
+            if (!alarm){
+                cout << "Modalità ALARM disattivata" << endl;
+                break;
+            }
+
+        }
+
+    }
+
+}
+
+int main(){
+
+    srand(time(0));
+
+    int sockfd;
+    struct sockaddr_in central_addr;
+    socklen_t len = sizeof(central_addr);
+
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0){
+        perror("Errore nella socket\n");
+        return -1;
+    }
+
+    central_addr.sin_family = AF_INET;
+    central_addr.sin_port = htons(PORT);
+    inet_pton(AF_INET, "127.0.0.1", &central_addr.sin_addr);
+
+    if ((connect(sockfd, (struct sockaddr*)&central_addr, len)) < 0){
+        perror("Errore nella connessione con il server\n");
+        return -1;
+    }
+    cout << "Connesso al Central Node" << endl;
+
+    string ID;
+    cout << "Inserisci l'ID del sensore: ";
+    getline(cin, ID);
+    cout << endl;
+
+    function(sockfd, ID);
+    
+
+    close(sockfd);
+    return 0;
+
+}
