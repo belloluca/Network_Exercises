@@ -1,0 +1,197 @@
+#include <iostream>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string>
+#include <cstring>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <thread>
+
+using namespace std;
+
+#define PORT 8080
+#define BUFFER 1024
+
+void sendMsgUDP(int socket, string ipPeer, int portPeer, int serverSocket){
+
+    struct sockaddr_in peer_addr;
+    peer_addr.sin_family = AF_INET;
+    peer_addr.sin_port = htons(portPeer);
+    inet_pton(AF_INET, ipPeer.c_str(), &peer_addr.sin_addr);
+
+    string msg;
+
+    while (true){
+
+        cout << "> ";
+        cout.flush();
+
+        getline(cin, msg);
+
+        if (msg == "QUIT"){
+            cout << "Disconessione...\n";
+            sendto(socket, msg.c_str(), msg.size(), 0, (struct sockaddr*)&peer_addr, sizeof(peer_addr));
+
+            send(serverSocket, "QUIT", 4, 0);
+            break;
+        }
+
+        if ((sendto(socket, msg.c_str(), msg.size(), 0, (struct sockaddr*)&peer_addr, sizeof(peer_addr))) < 0){
+            perror("Errore nell'invio del messaggio\n");
+            return;
+        }
+
+
+
+    }
+}
+
+void recvMsgUDP(int socket){
+
+
+
+    while (true){
+
+        struct sockaddr_in peer;
+        socklen_t len = sizeof(peer);
+
+        char buffer[BUFFER];
+
+        int n = recvfrom(socket, buffer, BUFFER - 1, 0, (struct sockaddr*)&peer, &len);
+        if (n <= 0){
+            return;
+        }
+        buffer[n] = '\0';
+
+        if (string(buffer) == "QUIT"){
+            cout << "L'altro utente ha terminato la chat.\n";
+            break;
+            }
+
+        cout << "Peer: " << buffer << endl;
+
+    }
+
+}
+
+void chat(string ip, int port, int serverSocket){
+
+    string receive, msg;
+    
+    int socket_udp;
+    socket_udp = socket(AF_INET, SOCK_DGRAM, 0);
+    if (socket_udp < 0){
+        perror("Errore nella socket UDP\n");
+        return;
+    }
+
+    string Port;
+
+    cout << "Inserisci la porta che hai inviato al server: ";
+    getline(cin, Port);
+    cout << endl;
+
+    int localPort = stoi(Port);
+
+    struct sockaddr_in client_addr;
+    client_addr.sin_port = htons(localPort);
+    client_addr.sin_family = AF_INET;
+    client_addr.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(socket_udp, (struct sockaddr*)&client_addr, sizeof(client_addr)) < 0) {
+        perror("Errore nel bind UDP");
+        close(socket_udp);
+        return;
+    }
+
+    thread t1(recvMsgUDP, socket_udp);
+    thread t2(sendMsgUDP, socket_udp, ip, port, serverSocket);
+
+    t2.join();
+    close(socket_udp);
+    t1.detach();
+
+    return;
+
+}   
+
+int main(){
+
+    int sockfd;
+    struct sockaddr_in server_addr;
+    socklen_t len = sizeof(server_addr);
+
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0){
+        perror("Errore nella socket\n");
+        return -1;
+    }
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr);
+
+    if ((connect(sockfd, (struct sockaddr*)&server_addr, len)) < 0){
+        perror("Errore nella connessione con il server...\n");
+        return -1;
+    }
+
+    while (true){
+
+
+        char buffer[BUFFER];
+
+        int n = recv(sockfd, buffer, BUFFER - 1, 0);
+        if (n <= 0){
+            perror("Errore nella ricezione dei dati\n");
+            return -1;
+        }
+        buffer[n] = '\0';
+
+        cout << "Messaggio ricevuto: " << buffer << endl;
+
+        string receive(buffer);
+        int port;
+        string ip;
+
+        if (receive.find("Informazioni") != string::npos){
+            int pos1 = receive.find("Porta:");
+            int pos2 = receive.find(",", pos1);
+            int pos3 = receive.find("Indirizzo IP:");
+
+            port = stoi(receive.substr(pos1 + 7, pos2 - pos1 - 7));
+            ip = receive.substr(pos3 + 14);
+
+            chat(ip, port, sockfd);
+            break;
+        }
+
+        string msg;
+
+            cout << "> ";
+            cout.flush();
+
+            getline(cin, msg);
+
+            if (msg == "QUIT"){
+                cout << "Disconessione...\n";
+                send(sockfd, msg.c_str(), msg.size(), 0);
+                break;
+            }
+
+            if ((send(sockfd, msg.c_str(), msg.size(), 0)) < 0){
+                perror("Errore nell'invio del messaggio\n");
+                return -1;
+            }
+
+
+
+
+
+    }
+
+    close(sockfd);
+    return 0;
+
+}
