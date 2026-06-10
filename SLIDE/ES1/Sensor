@@ -1,0 +1,71 @@
+#include <iostream>
+#include <string>
+#include <cstring>
+#include <unistd.h>
+#include <stdlib.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <ctime>
+#include <thread>
+
+using namespace std;
+
+#define PORT 8080
+#define BUFFER 1024
+
+void sendMsg(int socket, string id, sockaddr_in central_addr){
+
+    string msg;
+
+    while (true){
+
+        int temp = rand() % 45;
+        int hum = rand() % 100;
+        int air = rand() % 100;
+
+        msg = id + "|" + to_string(temp) + "|" + to_string(hum) + "|" + to_string(air);
+        
+        if (sendto(socket, msg.c_str(), msg.size(), 0, (struct sockaddr*)&central_addr, sizeof(central_addr)) < 0){
+            perror("Errore d'invio");
+            continue;
+        }
+        cout << "Temperatura: " << temp << " | Umidità: " << hum << " | Qualità dell'aria: " << air << endl;
+
+        sleep(3);
+
+    }
+
+}
+
+int main(){
+
+    srand(time(0));
+
+    int sockfd;
+    struct sockaddr_in central_addr;
+    socklen_t len = sizeof(central_addr);
+    string id;
+
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0){
+        perror("Error socket");
+        return -1;
+    }
+
+    central_addr.sin_family = AF_INET;
+    central_addr.sin_port = htons(PORT);
+    inet_pton(AF_INET, "127.0.0.1", &central_addr.sin_addr);
+
+    cout << "Inserisci l'id del sensore: ";
+    cin >> id;
+    cout << endl;
+
+    sendMsg(sockfd, id, central_addr);
+  
+
+    close(sockfd);
+
+    return 0;
+
+}
