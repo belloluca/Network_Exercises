@@ -1,0 +1,117 @@
+#include <iostream>
+#include <string>
+#include <cstring>
+#include <unistd.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <thread>
+
+using namespace std;
+
+#define PORT 8080
+#define BUFFER 1024
+
+void sendMsg(int socket, string const msg){
+
+    if ((send(socket, msg.c_str(), msg.size(), 0)) < 0){
+        perror("Errore nell'invio dei dati\n");
+        return;
+    }
+
+}
+
+string recvMsg(int socket){
+
+    char buffer[BUFFER];
+
+    int n = recv(socket, buffer, BUFFER, 0);
+    if (n < 0){
+        perror("Errore nella ricezione del messaggio\n");
+        return "";
+    }
+    buffer[n] = '\0';
+
+    return string(buffer);
+
+}
+
+void function(int socket, string ID){
+
+    string msg, receive;
+    bool alarm = false;
+
+    while (true){
+
+        while (!alarm){
+
+            sleep(3);
+
+            int temp = rand() % 45;
+            int hum = rand() % 100;
+            int air = rand() % 100;
+
+            msg = "Sensor " + ID + ": " + to_string(temp) + " | " + to_string(hum) + " | " + to_string(air) + '\n';
+
+            if (temp > 30 || air > 70){
+
+                alarm = true;
+                msg = "Sensor " + ID + ": " + to_string(temp) + " | " + to_string(hum) + " | " + to_string(air) + " | Alarm detected\n";
+
+            }
+
+            cout << "Messaggio inviato --> " + msg;
+            sendMsg(socket, msg);
+
+        }
+
+        receive = recvMsg(socket);
+
+        if (receive == "STOP ALARM"){
+            alarm = false;
+        }
+
+    }
+
+}
+
+
+
+int main(){
+
+    srand(time(0));
+
+    int sockfd;
+    struct sockaddr_in central_addr;
+    socklen_t len = sizeof(central_addr);
+    string ID;
+
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0){
+        perror("Errore nella scoket\n");
+        return -1;
+    }
+
+    central_addr.sin_family = AF_INET;
+    central_addr.sin_port = htons(PORT);
+    inet_pton(AF_INET, "127.0.0.1", &central_addr.sin_addr);
+
+    if ((connect(sockfd, (struct sockaddr*)&central_addr, len)) <0 ){
+        perror("Errore nella connessione con il Central Node\n");
+        return -1;
+    }
+    cout << "Sensore connesso al Central Node...\n";
+
+    cout << "Inserisci l'ID del sensore: ";
+    cin >> ID;
+    cout << endl;
+
+    thread t(function, sockfd, ID);
+    t.join();
+
+    close(sockfd);
+    return 0;
+
+}
