@@ -107,12 +107,12 @@ int main(){
         }
         cout << "Client connesso...\n";
 
-        Users.insert(new_sockfd);
-
         {
 
             lock_guard<mutex> lock(serverMutex);
 
+            Users.insert(new_sockfd);
+            
         }
 
         thread t(handleClient, new_sockfd);
