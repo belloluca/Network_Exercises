@@ -1,50 +1,42 @@
 #include <iostream>
+#include <stdlib.h>
+#include <unistd.h>
 #include <cstring>
 #include <string>
 #include <arpa/inet.h>
-#include <sys/socket.h>
 #include <netinet/in.h>
-#include <mutex>
-#include <map>
-#include <thread>
-#include <unistd.h>
-#include <stdlib.h>
+#include <sys/socket.h>
 #include <fstream>
-
-using namespace std;
+#include <map>
+#include <mutex>
+#include <thread>
 
 #define PORT 8080
 #define BUFFER 1024
+
+using namespace std;
 
 struct User{
 
     string email;
     string password;
+    string ip;
     bool logged = false;
-    bool chatting = false;
+    bool occupied = false;
     int socket = -1;
     int port;
-    string ip;
 
 };
 
 map<string, User> Users;
 mutex serverMutex;
 
-void sendMsg(int socket, string const msg){
-
-    if ((send(socket, msg.c_str(), msg.size(), 0) < 0)){
-        perror("Errore nell'invio dei dati\n");
-        return;
-    }
-
-}
-
-string recvMsg(int socket){
+string rcvMsg(int socket){
 
     char buffer[BUFFER];
+    int n;
 
-    int n = recv(socket, buffer, BUFFER - 1, 0);
+    n = recv(socket, buffer, BUFFER - 1, 0);
     if (n <= 0){
         perror("Errore nella ricezione dei dati o client disconnesso\n");
         return "";
@@ -55,38 +47,46 @@ string recvMsg(int socket){
 
 }
 
-void saveUser(User const user){
+void sendMsg(int socket, string const msg){
+
+    if ((send(socket, msg.c_str(), msg.size(), 0)) < 0){
+        perror("Errore nell'invio dei dati\n");
+        return;
+    }
+
+}
+
+void saveUser(User user){
 
     ofstream file("users.txt", ios::app);
 
     if (!file.is_open()){
-        cout << "Impossibile aprire il file" << endl;
+        cout << "Errore nell'apertura del file\n";
         return;
     }
 
     file << user.email << " " << user.password << endl;
 
     file.close();
-
 }
 
 void loadFile(){
 
     ifstream file("users.txt");
-    string email, password;
     User user;
+    string email, password;
 
     if (!file.is_open()){
-        cout << "Impossibile aprire il file" << endl;
+        cout << "Errore nell'apertura del file\n";
         return;
     }
 
     while (file >> email >> password){
-        
+
         user.email = email;
         user.password = password;
         user.socket = -1;
-        user.chatting = false;
+        user.occupied = false;
         user.logged = false;
         user.ip = "";
         user.port = 0;
@@ -99,132 +99,123 @@ void loadFile(){
 
 }
 
-void chatP2P(int socket1, string const sender){
+void userList(string const email, int socket){
 
-    string receiver;
-    string send_ip, rec_ip;
-    int port1, port2;
-    int socket2;
-    bool found = false, logged = false;
-
-    {
-
-        lock_guard<mutex> lock(serverMutex);
-
-        if (Users[sender].logged && !Users[sender].chatting){
-            logged = true;
-        }
-
-    }
-
-    if (!logged){
-        sendMsg(socket1, "Devi prima autenticarti");
-        return;
-    }        
-
-    sendMsg(socket1, "Con chi vuoi parlare?");
-    receiver = recvMsg(socket1);
-
-    {
-
-        lock_guard<mutex> lock(serverMutex);
-
-        if (Users[sender].logged && !Users[sender].chatting){
-
-            logged = true;
-
-            if (Users.find(receiver) != Users.end() && Users[receiver].logged){
-
-                port1 = Users[sender].port;
-                port2 = Users[receiver].port;
-
-                send_ip = Users[sender].ip;
-                rec_ip = Users[receiver].ip;
-
-                Users[sender].chatting = true;
-                Users[receiver].chatting = true;
-
-                socket2 = Users[receiver].socket;
-
-                found = true;
-
-            }
-
-        }
-
-    }
-
-
-    if (found){
-        sendMsg(socket1, "Indirizzo IP di " + receiver + ": " + rec_ip + ", Porta P2P di " + receiver + ": " + to_string(port2) + "\n");
-
-        sendMsg(socket2, "Indirizzo IP di " + sender + ": " + send_ip + ", Porta P2P di " + sender + ": " + to_string(port1) + "\n");
-    }else{
-        sendMsg(socket1, "Utente non disponibile");
-    }
-
-    
-}
-
-void userList(int socket, string const email){
-
-    string list = "Lista degli utenti online:\n";
+    string list = "Utenti online:\n";
     bool found = false;
 
-    lock_guard<mutex> lock(serverMutex);
-
     for (auto const pair : Users){
-
         User const user = pair.second;
 
-        if (user.logged){
-            if (user.email != email){
-                list += "- " + user.email + '\n';
-                found = true;
-            }
+        if (user.logged && user.email != email){
+            list += "-" + user.email + '\n';
+            found = true;
         }
-
     }
 
-    if (found){
-        sendMsg(socket, list);
-    }else{
-        sendMsg(socket, "Nessun utente online");
+    if (!found){
+        sendMsg(socket, "Nessun utente online\n");
+        return;
     }
+
+    sendMsg(socket, list);
+
 }
 
-string manageUser(int socket, string const comand, string client_addr){
+void P2P(string const email, int socket){
+
+    sendMsg(socket, "Con chi vuoi parlare?\n");
+    string dest = rcvMsg(socket);
+
+    while (dest.empty()){
+        sendMsg(socket, "Inserisci l'email di un utente\n");
+        dest = rcvMsg(socket);
+    }
+
+    bool exist = false;
+    bool available = false;
+
+    string senderIp, senderEmail;
+    int senderUdpPort;
+    int senderSocket;
+
+    string destIp, destEmail;
+    int destUdpPort;
+    int destSocket;
+
+    {
+        lock_guard<mutex> lock(serverMutex);
+
+        if (Users.find(dest) != Users.end()){
+
+            exist = true;
+
+            if (Users[dest].logged && !Users[dest].occupied){
+
+                available = true;
+
+                Users[email].occupied = true;
+                Users[dest].occupied = true;
+
+                senderEmail = Users[email].email;
+                senderIp = Users[email].ip;
+                senderUdpPort = Users[email].port;
+                senderSocket = Users[email].socket;
+
+                destEmail = Users[dest].email;
+                destIp = Users[dest].ip;
+                destUdpPort = Users[dest].port;
+                destSocket = Users[dest].socket;
+            }
+        }
+    }
+
+    if (!exist){
+        sendMsg(socket, "Utente non esistente\n");
+        return;
+    }
+
+    if (!available){
+        sendMsg(socket, "Utente non connesso o già occupato\n");
+        return;
+    }
+
+    sendMsg(senderSocket, "Peer info - IP: " + destIp + ", Porta: " + to_string(destUdpPort));
+    sendMsg(destSocket, "Peer info - IP: " + senderIp + ", Porta: " + to_string(senderUdpPort));
+
+}
+
+string manageUser(int socket, string const comand, string clientIp){
 
     string email, password;
+    bool logged = false, registered = false;
     User user;
 
-    sendMsg(socket, "Inserisci l'email: ");
-    email = recvMsg(socket);
-
-    while (email.empty()){
-
-        sendMsg(socket, "Il campo dell'email è vuoto");
-        sendMsg(socket, "Inserisci l'email: ");
-
-        email = recvMsg(socket);
-
-    }
-
-    sendMsg(socket, "Inserisci password: ");
-    password = recvMsg(socket);
-
-    while (password.empty()){
-
-        sendMsg(socket, "Il campo della password è vuoto");
-        sendMsg(socket, "Inserisci password: ");
-
-        password = recvMsg(socket);
-
-    }
-
-    bool registered = false;
-
     if (comand == "REGISTER"){
+
+        sendMsg(socket, "Inserisci l'email:\n");
+        email = rcvMsg(socket);
+
+        while (email.empty()){
+
+            sendMsg(socket, "Campo 'email' vuoto\n");
+
+            sendMsg(socket, "Inserisci l'email:\n");
+            email = rcvMsg(socket);
+
+        }
+
+        sendMsg(socket, "Inserisci password:\n");
+        password = rcvMsg(socket);
+
+        while (password.empty()){
+
+            sendMsg(socket, "Campo 'password' vuoto\n");
+
+            sendMsg(socket, "Inserisci password:\n");
+            password = rcvMsg(socket);
+
+        }
 
         {
 
@@ -236,7 +227,6 @@ string manageUser(int socket, string const comand, string client_addr){
                 user.password = password;
 
                 Users[email] = user;
-
                 saveUser(user);
 
             }else{
@@ -245,103 +235,104 @@ string manageUser(int socket, string const comand, string client_addr){
 
         }
 
-        if (registered){
-            sendMsg(socket, "Utente già registrato");
-        }else{
+        if (!registered){
             sendMsg(socket, "Utente registrato con successo\n");
-            sendMsg(socket, "Comandi disponibili: LOGIN | LIST | CHAT | QUIT");
+            sendMsg(socket, "Comandi disponibili: LOGIN | LIST | P2P\n");
+        }else{
+            sendMsg(socket, "Utente già registrato\n");
         }
 
     }
-    else if (comand == "LOGIN"){
+    else if(comand == "LOGIN"){
 
-        string P2P;
         bool logged = false, error = false, registered = false;
 
-        
-        sendMsg(socket, "Inserisci porta P2P: ");
-        P2P = recvMsg(socket);
+        sendMsg(socket, "Inserisci l'email:\n");
+        email = rcvMsg(socket);
 
-        while (P2P.empty()){
+        while (email.empty()){
 
-            sendMsg(socket, "Il campo della porta è vuoto\n");
-            sendMsg(socket, "Inserisci porta: ");
+            sendMsg(socket, "Campo 'email' vuoto\n");
 
-            P2P = recvMsg(socket);
+            sendMsg(socket, "Inserisci l'email:\n");
+            email = rcvMsg(socket);
 
         }
+
+        sendMsg(socket, "Inserisci password:\n");
+        password = rcvMsg(socket);
+
+        while (password.empty()){
+
+            sendMsg(socket, "Campo 'password' vuoto\n");
+
+            sendMsg(socket, "Inserisci password:\n");
+            password = rcvMsg(socket);
+
+        }
+
+        sendMsg(socket, "Inserisci porta UDP:\n");
+        string udpPortStr = rcvMsg(socket);
+        int udpPort = stoi(udpPortStr);
 
         {
 
             lock_guard<mutex> lock(serverMutex);
 
-            if (Users.find(email) != Users.end()){
+            if (Users.find(email) != Users.end() && !Users[email].logged){
 
                 registered = true;
 
-                if (!Users[email].logged){
+                if (Users[email].password == password){
 
-                    if (Users[email].password == password){
-
-                        Users[email].socket = socket;
-                        Users[email].logged = true;
-                        Users[email].ip = client_addr;
-                        Users[email].port = stoi(P2P);
-                        
-                    }else{
-                        error = true;
-                    }
+                    Users[email].logged = true;
+                    Users[email].socket = socket;
+                    Users[email].ip = clientIp;
+                    Users[email].port = udpPort;
 
                 }else{
-                    logged = true;
+                    error = true;
                 }
 
             }
+
         }
 
-        if (registered){
-            if (!logged){
-                while (error){
+        while (error){
 
-                    sendMsg(socket, "Passoword errata");
-                    
-                    sendMsg(socket, "Inserisci password: ");
-                    password = recvMsg(socket);
+            sendMsg(socket, "Password errata\n");
+            sendMsg(socket, "Inserisci password\n");
 
-                    while (password.empty()){
+            password = rcvMsg(socket);
 
-                        sendMsg(socket, "Il campo della password è vuoto");
-                        sendMsg(socket, "Inserisci password: ");
+            while (password.empty()){
 
-                        password = recvMsg(socket);
+                sendMsg(socket, "Campo 'password' vuoto\n");
 
-                    }
+                sendMsg(socket, "Inserisci password:\n");
+                password = rcvMsg(socket);
 
-                    {
-
-                        lock_guard<mutex> lock(serverMutex);
-
-                        if (Users[email].password == password){
-
-                            Users[email].socket = socket;
-                            Users[email].logged = true;
-                            Users[email].ip = client_addr;
-                            Users[email].port = stoi(P2P);
-                            
-                            error = false;
-
-                        }
-
-                    }
-
-                }
-                sendMsg(socket, "Utente autenticato\n");
-                sendMsg(socket, "Comandi disponibili: LIST | CHAT | QUIT");
-            }else{
-                sendMsg(socket, "Utente già connesso");
             }
-        }else{
-            sendMsg(socket, "Utente non registrato");
+                
+            if (Users[email].password == password){
+
+                Users[email].logged = true;
+                Users[email].socket = socket;
+                
+                error = false;
+                break;
+
+            }
+
+        }
+
+        if (!registered){
+            sendMsg(socket, "Utente non registrato o già connesso\n");
+        }
+        else if (!error){
+            sendMsg(socket, "Utente autenticato\n");
+
+            sendMsg(socket, "Comandi disponibili:  LIST | P2P | END_P2P | QUIT\n");
         }
 
     }
@@ -350,77 +341,111 @@ string manageUser(int socket, string const comand, string client_addr){
 
 }
 
-void handleClient(int socket, string client_addr){
+void handleClient(int socket, string clientIp){
 
-    sendMsg(socket, "Comandi disponibili: REGISTER | LOGIN | LIST | CHAT | QUIT");
+    sendMsg(socket, "Comandi disponibili: REGISTER | LOGIN | LIST | P2P | QUIT\n");
 
     string email;
 
     while (true){
 
-        string comand = recvMsg(socket);
-
-        bool occupied = false;
+        bool occupato = false;
 
         {
 
             lock_guard<mutex> lock(serverMutex);
 
-            if (!email.empty() && Users.find(email) != Users.end() && Users[email].logged && Users[email].chatting)
-                occupied = true;
+            if (!email.empty() && Users.find(email) != Users.end() && Users[email].logged && Users[email].occupied){
+                occupato = true;            
+            }
+
         }
 
-        if (occupied){
-            this_thread::sleep_for(chrono::milliseconds(200));
+        /* if (occupato){
+            this_thread::sleep_for(chrono::microseconds(200));
             continue;
-        }
+        } 
+        */
+
+        string comand = rcvMsg(socket);
 
         if (comand == "REGISTER" || comand == "LOGIN"){
-            email = manageUser(socket, comand, client_addr);
+            email = manageUser(socket, comand, clientIp);
         }
         else if (comand == "LIST"){
 
             bool error = false;
-        
+
             {
 
                 lock_guard<mutex> lock(serverMutex);
 
-                if (!Users[email].logged || Users[email].chatting)
+                if (email.empty() || Users.find(email) == Users.end() || !Users[email].logged){
                     error = true;
+                }
 
             }
 
-            if (!error){
-                userList(socket, email);
+            if (error){
+                sendMsg(socket, "Utente non registrato o non autenticato\n");
             }else{
-                sendMsg(socket, "Errore nella visualizzazione della lista. Controlla se hai effettuato il login e non sei in una chat");
+                userList(email, socket);
             }
 
         }
-        else if (comand == "CHAT"){
-            chatP2P(socket, email);
+        else if (comand == "P2P"){
+
+            bool error = false;
+
+            {
+
+                lock_guard<mutex> lock(serverMutex);
+
+                if (email.empty() || Users.find(email) == Users.end() || !Users[email].logged){
+                    error = true;
+                }
+
+            }
+
+            if (error){
+                sendMsg(socket, "Utente non registrato o non autenticato\n");
+            }else{
+                P2P(email, socket);
+            }
+
         }
         else if (comand == "QUIT"){
 
-            sendMsg(socket, "Arrivederci!");
-            cout << "Client " << email << " disconnesso\n";
-
+            sendMsg(socket, "Arrivederci\n");
+            cout << "Utente disconnesso " << email << endl;
+            
             {
 
                 lock_guard<mutex> lock(serverMutex);
 
                 Users[email].logged = false;
-                Users[email].port = 0;
-                Users[email].chatting = false;
-                Users[email].ip = "";
+                Users[email].occupied = false;
                 Users[email].socket = -1;
 
             }
 
             break;
+            
+        }
+        else if (comand == "END_P2P"){
+
+            lock_guard<mutex> lock(serverMutex);
+
+            if (!email.empty() && Users.find(email) != Users.end()){
+                Users[email].occupied = false;
+            }
+
+            sendMsg(socket, "Chat P2P terminata\n");
         }else{
-            sendMsg(socket, "Comando non idoneo");
+
+            sendMsg(socket, "Comando non idoneo\n");
+            continue;
+
         }
 
     }
@@ -433,9 +458,9 @@ int main(){
 
     loadFile();
 
-    int server_fd, new_socket;
+    int server_fd, new_sockfd;
     struct sockaddr_in server_addr, client_addr;
-    socklen_t len = sizeof(server_addr);
+    socklen_t len = sizeof(client_addr);
 
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0){
@@ -457,24 +482,23 @@ int main(){
 
     while (true){
 
-        new_socket = accept(server_fd, (struct sockaddr*)&client_addr, &len);
-        if (new_socket < 0){
+        new_sockfd = accept(server_fd, (struct sockaddr*)&client_addr, &len);
+        if (new_sockfd < 0){
             perror("Errore nella connessione con il client\n");
             continue;
         }
-        cout << "Client connesso...\n";
+        cout << "Cliet connesso...\n";
 
         char ip[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &client_addr.sin_addr, ip, INET_ADDRSTRLEN);
-        string client_ip = string(ip);
 
-        thread t(handleClient, new_socket, client_ip);
+        thread t(handleClient, new_sockfd, string(ip));
         t.detach();
 
     }
 
     close(server_fd);
-    
+
     return 0;
 
 }
