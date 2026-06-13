@@ -1,12 +1,12 @@
 #include <iostream>
+#include <stdlib.h>
+#include <unistd.h>
 #include <cstring>
 #include <string>
 #include <arpa/inet.h>
-#include <sys/socket.h>
 #include <netinet/in.h>
+#include <sys/socket.h>
 #include <thread>
-#include <unistd.h>
-#include <stdlib.h>
 #include <atomic>
 
 using namespace std;
@@ -16,208 +16,96 @@ using namespace std;
 
 atomic<bool> inChat(false);
 
-int udpSocket = -1;
-sockaddr_in peerAddr;
+string peerIP = "";
+int peerPort = 0;
 
-// Invia un messaggio TCP al server
-void sendTCP(int socket, string msg){
-
-    if (send(socket, msg.c_str(), msg.size(), 0) < 0){
-        perror("Errore nell'invio TCP");
-    }
-
-}
-
-// Riceve messaggi UDP dal peer
-void recvUDP(int socketTCP){
-
-    char buffer[BUFFER];
-    sockaddr_in address;
-    socklen_t len = sizeof(address);
-
-    while (true){
-
-        int n = recvfrom(
-            udpSocket,
-            buffer,
-            BUFFER - 1,
-            0,
-            (struct sockaddr*)&address,
-            &len
-        );
-
-        if (n <= 0){
-            perror("Errore nella ricezione UDP");
-            return;
-        }
-
-        buffer[n] = '\0';
-
-        string msg = string(buffer);
-
-        if (msg == "QUIT"){
-            cout << "L'altro utente è uscito dalla chat" << endl;
-
-            sendTCP(socketTCP, "ENDCHAT");
-
-            inChat = false;
-
-            close(udpSocket);
-            udpSocket = -1;
-
-            return;
-        }
-
-        cout << "Peer: " << msg << endl;
-    }
-}
-
-// Avvia la chat UDP
-void startChat(string peer_ip, int peer_port, int my_port, int socketTCP){
-
-    sockaddr_in myAddr;
-
-    udpSocket = socket(AF_INET, SOCK_DGRAM, 0);
-    if (udpSocket < 0){
-        perror("Errore nella socket UDP");
-        return;
-    }
-
-    memset(&myAddr, 0, sizeof(myAddr));
-    memset(&peerAddr, 0, sizeof(peerAddr));
-
-    // Indirizzo locale: serve per ricevere sulla mia porta UDP
-    myAddr.sin_family = AF_INET;
-    myAddr.sin_port = htons(my_port);
-    myAddr.sin_addr.s_addr = INADDR_ANY;
-
-    if (bind(udpSocket, (struct sockaddr*)&myAddr, sizeof(myAddr)) < 0){
-        perror("Errore nel bind UDP");
-        close(udpSocket);
-        udpSocket = -1;
-        return;
-    }
-
-    // Indirizzo del peer: serve per inviare all'altro client
-    peerAddr.sin_family = AF_INET;
-    peerAddr.sin_port = htons(peer_port);
-
-    if (inet_pton(AF_INET, peer_ip.c_str(), &peerAddr.sin_addr) <= 0){
-        perror("Errore inet_pton peer");
-        close(udpSocket);
-        udpSocket = -1;
-        return;
-    }
-
-    inChat = true;
-
-    cout << "Chat UDP avviata" << endl;
-    cout << "Mia porta UDP: " << my_port << endl;
-    cout << "Peer IP: " << peer_ip << endl;
-    cout << "Peer porta: " << peer_port << endl;
-    cout << "Scrivi QUIT per uscire dalla chat" << endl;
-
-    thread t(recvUDP, socketTCP);
-    t.detach();
-}
-
-// Unica funzione che legge da tastiera
-void inputLoop(int socketTCP){
-
-    string msg;
-
-    while (true){
-
-        getline(cin, msg);
-
-        if (!inChat){
-
-            sendTCP(socketTCP, msg);
-
-            if (msg == "QUIT"){
-                cout << "Uscita dal programma..." << endl;
-                return;
-            }
-
-        }else{
-
-            if (udpSocket == -1){
-                cout << "Errore: socket UDP non disponibile" << endl;
-                continue;
-            }
-
-            if (sendto(
-                udpSocket,
-                msg.c_str(),
-                msg.size(),
-                0,
-                (struct sockaddr*)&peerAddr,
-                sizeof(peerAddr)
-            ) < 0){
-                perror("Errore nell'invio UDP");
-                continue;
-            }
-
-            if (msg == "QUIT"){
-
-                cout << "Uscita dalla chat" << endl;
-
-                sendTCP(socketTCP, "ENDCHAT");
-
-                inChat = false;
-
-                close(udpSocket);
-                udpSocket = -1;
-            }
-        }
-    }
-}
-
-// Riceve messaggi TCP dal server
-void recvMsg(int socketTCP, int my_port){
+void recvUDP(int socket){
 
     char buffer[BUFFER];
 
     while (true){
 
-        int n = recv(socketTCP, buffer, BUFFER - 1, 0);
+        struct sockaddr_in sender_addr;
+        socklen_t len = sizeof(sender_addr);
+
+        int n = recvfrom(socket, buffer, BUFFER - 1, 0, (struct sockaddr*)&sender_addr, &len);
         if (n <= 0){
-            perror("Errore nella ricezione TCP o server disconnesso");
+            perror("Errore nella ricezione dei dati UDP");
             return;
         }
 
         buffer[n] = '\0';
 
-        cout << buffer << endl;
+        cout << "\nMessaggio ricevuto: " << buffer << endl;
+        cout.flush();
 
-        string receive = string(buffer);
-
-        if (receive.find("Indirizzo") != string::npos){
-
-            int pos1 = receive.find(":");
-            int pos2 = receive.find(",");
-
-            string peer_ip = receive.substr(pos1 + 2, pos2 - (pos1 + 2));
-
-            int pos3 = receive.find(":", pos2);
-            string peer_port = receive.substr(pos3 + 2);
-
-            startChat(peer_ip, stoi(peer_port), my_port, socketTCP);
-        }
     }
+
+}
+
+void sendUDP(int udpSocket, string msg){
+
+    struct sockaddr_in peer;
+
+    peer.sin_family = AF_INET;
+    peer.sin_port = htons(peerPort);
+
+    if (inet_pton(AF_INET, peerIP.c_str(), &peer.sin_addr) <= 0){
+        cout << "IP peer non valido\n";
+        return;
+    }
+
+    if (sendto(udpSocket, msg.c_str(), msg.size(), 0, (struct sockaddr*)&peer, sizeof(peer)) < 0){
+        perror("Errore nell'invio UDP");
+        return;
+    }
+
+}
+
+void recvMsg(int socket){
+
+    char buffer[BUFFER];
+
+    while (true){
+
+        int n = recv(socket, buffer, BUFFER - 1, 0);
+        if (n <= 0){
+            perror("Errore nella ricezione TCP");
+            return;
+        }
+
+        buffer[n] = '\0';
+
+        string msg(buffer);
+
+        cout << "\n" << msg << endl;
+
+        if (msg.find("Peer info") != string::npos){
+
+            int pos1 = msg.find(":");
+            int pos2 = msg.find(",");
+
+            peerIP = msg.substr(pos1 + 2, pos2 - (pos1 + 2));
+
+            pos1 = msg.find(":", pos2);
+            peerPort = stoi(msg.substr(pos1 + 2));
+
+            cout << "Chat P2P avviata con peer " << peerIP << ":" << peerPort << endl;
+            cout << "Scrivi i messaggi. Scrivi 'exit' per uscire dalla chat.\n";
+
+            inChat = true;
+        }
+
+        cout.flush();
+
+    }
+
 }
 
 int main(){
 
     int sockfd;
-    sockaddr_in server_addr;
-    socklen_t len = sizeof(server_addr);
-
-    int my_port;
-
-    cout << "Inserisci la porta UDP che userai per il P2P: ";
-    cin >> my_port;
-    cin.ignore();
+    struct sockaddr_in server_addr;
 
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0){
@@ -225,28 +113,85 @@ int main(){
         return -1;
     }
 
-    memset(&server_addr, 0, sizeof(server_addr));
-
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(PORT);
-
     inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr);
 
-    if (connect(sockfd, (struct sockaddr*)&server_addr, len) < 0){
-        perror("Errore nel connettersi con il server");
-        close(sockfd);
+    if (connect(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0){
+        perror("Errore nella connessione con il server");
         return -1;
     }
 
-    cout << "Connesso al server..." << endl;
+    int localUdpPort;
+    cout << "Inserisci la tua porta UDP: ";
+    cin >> localUdpPort;
+    cin.ignore();
 
-    thread t1(recvMsg, sockfd, my_port);
-    thread t2(inputLoop, sockfd);
+    int udpSocket = socket(AF_INET, SOCK_DGRAM, 0);
+    if (udpSocket < 0){
+        perror("Errore nella socket UDP");
+        return -1;
+    }
 
-    t1.join();
-    t2.join();
+    struct sockaddr_in udpAddr;
+    memset(&udpAddr, 0, sizeof(udpAddr));
+
+    udpAddr.sin_family = AF_INET;
+    udpAddr.sin_port = htons(localUdpPort);
+    udpAddr.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(udpSocket, (struct sockaddr*)&udpAddr, sizeof(udpAddr)) < 0){
+        perror("Errore nel bind UDP");
+        return -1;
+    }
+
+    thread tcpReceiver(recvMsg, sockfd);
+    thread udpReceiver(recvUDP, udpSocket);
+
+    tcpReceiver.detach();
+    udpReceiver.detach();
+
+    string msg;
+
+    while (true){
+
+        cout << "> ";
+        getline(cin, msg);
+
+        if (msg.empty()){
+            continue;
+        }
+
+        if (inChat){
+
+            sendUDP(udpSocket, msg);
+
+            if (msg == "exit"){
+                inChat = false;
+
+                string end = "END_P2P";
+                send(sockfd, end.c_str(), end.size(), 0);
+
+                cout << "Sei uscito dalla chat P2P\n";
+            }
+
+        }else{
+
+            if (send(sockfd, msg.c_str(), msg.size(), 0) < 0){
+                perror("Errore nell'invio TCP");
+                break;
+            }
+
+            if (msg == "QUIT"){
+                break;
+            }
+
+        }
+
+    }
 
     close(sockfd);
+    close(udpSocket);
 
     return 0;
 }
