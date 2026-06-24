@@ -27,6 +27,7 @@ The repository includes implementations of exercises such as:
 - 💬 Peer-to-Peer Chat
 - 🎮 Multiplayer networking exercises
 - 🖥️ TCP and UDP communication examples
+- ⚖️ Load Balancer
 - 🔄 Multithreading exercises
 - 📂 Client/server architecture examples
 
