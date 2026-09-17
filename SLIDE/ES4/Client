@@ -19,19 +19,11 @@ void sendMsg(int socket){
 
     while (true){
 
-        cout << "> ";
         getline(cin, msg);
-        cout.flush();
 
         if ((send(socket, msg.c_str(), msg.size(), 0)) < 0){
             perror("Errore nell'invio dei dati\n");
             return;
-        }
-
-        if (msg == "QUIT"){
-            cout << "Disconessione...\n";
-            close(socket);
-            break;
         }
 
     }
@@ -46,14 +38,13 @@ void recvMsg(int socket){
         int n;
 
         n = recv(socket, buffer, BUFFER, 0);
-        if (n < 0){
+        if (n <= 0){
             perror("Errore nella ricezione dei dati\n");
             return;
         }
         buffer[n] = '\0';
 
-        cout << "Messaggio ricevuto: " << buffer << endl;
-        cout.flush();
+        cout << buffer << endl;
 
     }
 
