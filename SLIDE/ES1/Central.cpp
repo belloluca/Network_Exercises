@@ -1,125 +1,142 @@
 #include <iostream>
-#include <string>
-#include <cstring>
-#include <unistd.h>
 #include <stdlib.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <thread>
+#include <unistd.h>
 #include <mutex>
 #include <set>
+#include <thread>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 
 using namespace std;
 
-#define SENSOR_PORT 8080
-#define CONTROL_PORT 9090
+mutex serverMutex;
+set<int> Sensors;
+
 #define BUFFER 1024
 
-mutex ServerMutex;
-set<string> Sensors;
+int control_port;
 
-void function(int central_socket, sockaddr_in sensor_addr){
+void send_alarm(string msg) {
 
-    char buffer[BUFFER];
-    socklen_t len = sizeof(sensor_addr);
-    string data, msg;
-    int n;
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        perror("Errore nella socket TCP\n");
+        return;
+    }
 
-    while (true){
+    struct sockaddr_in control_addr;
+    socklen_t len = sizeof(control_addr);
 
-        n = recvfrom(central_socket, buffer, BUFFER, 0, (struct sockaddr*)&sensor_addr, &len);
-        if (n < 0){
-            perror("Errore nella ricezione\n");
+    control_addr.sin_family = AF_INET;
+    control_addr.sin_port = htons(control_port);
+    inet_pton(AF_INET, "127.0.0.1", &control_addr.sin_addr);
+
+    if (connect(sockfd, (struct sockaddr*)&control_addr, len) < 0) {
+        perror("Errore nella connessione con il COntrol Node\n");
+        return;
+    }
+
+    if (send(sockfd, msg.c_str(), msg.size(), 0) < 0) {
+        perror("Errore nell'invio dell'allarme\n");
+        return;
+    }
+
+    cout << "ALLARME INVIATO" << endl;
+
+    close(sockfd);
+
+}
+
+void function(int socket, sockaddr_in address) {
+
+    socklen_t len = sizeof(address);
+
+    while (true) {
+        char buffer[BUFFER];
+        string data;
+        
+        int n = recvfrom(socket, buffer, BUFFER - 1, 0, (struct sockaddr*)&address, &len);
+        if (n <= 0) {
+            perror("Errore nella ricezione dei dati\n");
             continue;
         }
         buffer[n] = '\0';
 
-        data = string(buffer);
-
-        int p1 = data.find("|");
-        int p2 = data.find("|", p1 + 1);
-        int p3 = data.find("|", p2 + 1);
-
-        string id = data.substr(0, p1);
-
-        int temp = stoi(data.substr(p1 + 1, p2 - p1 - 1));
-        int hum = stoi(data.substr(p2 + 1, p3 - p2 - 1));
-        int air = stoi(data.substr(p3 + 1));
-
-        {
-            lock_guard<mutex> lock(ServerMutex);
-
-            if (Sensors.find(id) == Sensors.end()){
-                
-                Sensors.insert(id);
-
-                cout << "Sensore " << id << " registrato" << endl;
-
-            }
-        }
-        
         cout << buffer << endl;
 
-        if (temp > 30 || air > 70){
+        data = buffer;
 
-            int tcp_socket;
-            struct sockaddr_in control_addr;
+        int p1 = data.find(" ");
+        int p2 = data.find(":");
 
-            tcp_socket = socket(AF_INET, SOCK_STREAM, 0);
-            if (tcp_socket < 0){
-                perror("Errore nella socket TCP\n");
-                return;
+        int id = stoi(data.substr(p1 + 1, p2 - p1 - 1));
+
+        {
+            lock_guard<mutex> lock(serverMutex);
+
+            if (Sensors.find(id) == Sensors.end()) {
+                Sensors.insert(id);
+                cout << "Sensore " << id << " registrato\n";
             }
+        }
 
-            control_addr.sin_family = AF_INET;
-            control_addr.sin_port = htons(CONTROL_PORT);
-            inet_pton(AF_INET, "127.0.0.1", &control_addr.sin_addr);
+        p1 = data.find(" ", p2);
+        p2 = data.find(" ", p1 + 1);
 
-            if ((connect(tcp_socket, (struct sockaddr*)&control_addr, sizeof(control_addr))) < 0){
-                perror("Errore di connessione con il Control Node\n");
-                return;
-            }
+        int temp = stoi(data.substr(p1 + 1, p2 - p1 - 1));
+        
+        p1 = data.find(" ", p2 + 1);
+        p2 = data.find(" ", p1 + 1);
 
-            msg = "ALLARME RILEVATO DAL SENSORE: " + id + " --> Temperatura: " + to_string(temp) + " | Qualità dell'aria: " + to_string(air) + '\n';
+        int hum = stoi(data.substr(p1 + 1, p2 - p1 - 1));
 
-            if ((send(tcp_socket, msg.c_str(), msg.size(), 0)) < 0){
-                perror("Errore nell'invio dell'allarme\n");
-                continue;
-            }
+        p1 = data.find(" ", p2 + 1);
 
-            close(tcp_socket);
+        string air = data.substr(p1 + 1);
 
+        if (temp > 30 || air == "POOR") {
+            cout << endl << "ALLARME RILEVATO" << endl;
+            send_alarm(data);
         }
 
     }
-    
-    close(central_socket);
 
 }
 
-int main(){
+int main(int argc, char* argv[]) {
 
-    int central_socket;
-    struct sockaddr_in central_addr, sensor_addr;
-
-    central_socket = socket(AF_INET, SOCK_DGRAM, 0);
-    if (central_socket < 0){
-        perror("Errore nella socket");
+    if (argc != 3) {
+        cout << "Usage: " << argv[0] << " <local port> <control port>\n";
         return -1;
     }
 
-    central_addr.sin_family = AF_INET;
-    central_addr.sin_port = htons(SENSOR_PORT);
-    central_addr.sin_addr.s_addr = INADDR_ANY;
+    int port = stoi(argv[1]);
+    control_port = stoi(argv[2]);
 
-    if ((bind(central_socket, (struct sockaddr*)&central_addr, sizeof(central_addr))) < 0){
-        perror("Errore nel bind");
+    int sensor_sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sensor_sock < 0) {
+        perror("Errore nella socket\n");
         return -1;
     }
-    cout << "Central in ascolto dei sensori...\n";
 
-    thread t(function, central_socket, central_addr);
-    t.join();    
+    struct sockaddr_in address;
+    socklen_t len = sizeof(address);
+
+    address.sin_family = AF_INET;
+    address.sin_port = htons(port);
+    address.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(sensor_sock, (struct sockaddr*)&address, len) < 0) {
+        perror("Errore nel bind\n");
+        return -1;
+    }
+    cout << "Central Node in ascolto\n";
+
+    function (sensor_sock, address);
+    
+
+    close(sensor_sock);
+    return 0;
 
 }

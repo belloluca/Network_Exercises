@@ -1,75 +1,84 @@
-#include <fstream>
 #include <iostream>
-#include <string>
 #include <cstring>
-#include <netinet/in.h>
-#include <sys/socket.h>
+#include <string>
+#include <fstream>
 #include <arpa/inet.h>
-#include <stdlib.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 #include <unistd.h>
-#include <mutex>
+#include <stdlib.h>
 
 using namespace std;
 
-#define PORT 9090
 #define BUFFER 1024
 
-mutex fileMutex;
+void alarm(int socket) {
 
-int main(){
-
-    int control_socket, central_socket;
-    struct sockaddr_in control_addr, central_addr;
-    socklen_t len = sizeof(central_addr);
-    ofstream logfile("alarms.log", ios::app);
-    int n;
     char buffer[BUFFER];
+    ofstream file("alarms.txt", ios::app);
 
-    control_socket = socket(AF_INET, SOCK_STREAM, 0);
-    if (control_socket < 0){
-        perror("Errore socket\n");
+    int n = recv(socket, buffer, BUFFER - 1, 0);
+    if (n <= 0) {
+        perror("Errore nella ricezion dei dati\n");
+        return;
+    }
+    buffer[n] = '\0';
+
+    file << string(buffer) << endl;
+
+    file.close();
+
+    cout << "- ALLARME - " << buffer << endl;
+
+}
+
+int main(int argc, char* argv[]) {
+
+    if (argc != 2) {
+        cout << "Usage " << argv[0] << " <local_port>\n";
         return -1;
     }
 
+    int port = stoi(argv[1]);
+
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd < 0) {
+        perror("Errore nella socket\n");
+        return -1;
+    }
+
+    struct sockaddr_in control_addr, central_addr;
+    socklen_t len = sizeof(central_addr);
+
     control_addr.sin_family = AF_INET;
-    control_addr.sin_port = htons(PORT);
+    control_addr.sin_port = htons(port);
     control_addr.sin_addr.s_addr = INADDR_ANY;
 
-    if((bind(control_socket, (struct sockaddr*)&control_addr, sizeof(control_addr))) < 0){
+    if (bind(server_fd, (struct sockaddr*)&control_addr, sizeof(control_addr)) < 0) {
         perror("Errore nel bind\n");
         return -1;
     }
 
-    listen(control_socket, 10);
-    cout << "Control Node in ascolto...\n";
+    listen(server_fd, 1);
+    cout << "Control Node in ascolto\n";
 
-    while (true){
+    int central_socket;
 
-        central_socket = accept(control_socket, (struct sockaddr*)&central_addr, &len);
-        if (central_socket < 0){
-            perror("Errore nella connessione1n");
-            return -1;
-        }
-
-        n = recv(central_socket, buffer, BUFFER, 0);
-        if (n < 0){
-            perror("Errore nella ricezione\n");
+    while (true) {
+        central_socket = accept(server_fd, (struct sockaddr*)&central_addr, &len);
+        if (central_socket < 0) {
+            perror("Errore nella connessione\n");
             continue;
         }
-        buffer[n] = '\0';
+        cout << "Central Node collegato\n";
 
-        cout << "|ALLARME RICEVUTO| " << buffer << endl;
-
-        logfile << buffer << endl;
-
-        logfile.close();
+        alarm(central_socket);
 
         close(central_socket);
-
+        cout << "Central Node disconnesso\n";
     }
 
-    close(control_socket);
-
+    close(server_fd);
     return 0;
 
 }
