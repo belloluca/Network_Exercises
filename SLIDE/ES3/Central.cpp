@@ -1,182 +1,195 @@
 #include <iostream>
-#include <string>
-#include <cstring>
-#include <unistd.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <cstring>
+#include <string>
 #include <arpa/inet.h>
-#include <sys/socket.h>
 #include <netinet/in.h>
+#include <sys/socket.h>
 #include <thread>
 #include <mutex>
-#include <set>
 #include <map>
 
 using namespace std;
 
-#define SENSOR_PORT 8080
-#define CONTROL_PORT 9090
-
 #define BUFFER 1024
 
-map<string, int> SensorsMap;
-mutex CentraMutex;
+struct Sensor {
+    int id;
+    int socket;
+};
 
+mutex serverMutex;
+map<int, Sensor> Sensors;
 
-void sendMsg(int socket, string const msg){
+int control_port;
+int control_socket;
+struct sockaddr_in control_addr;
 
-    if ((send(socket, msg.c_str(), msg.size(), 0)) < 0){
-        perror("Errore nell'invio dei dati\n");
-        return;
-    }
-
-}
-
-string recvMsg(int socket){
-
+string rcvMsg(int socket) {
     char buffer[BUFFER];
-
-    int n = recv(socket, buffer, BUFFER, 0);
-    if (n < 0){
-        perror("Errore nella ricezione del messaggio\n");
-        return ""; 
+    
+    int n = recv(socket, buffer, BUFFER - 1, 0);
+    if (n <= 0) {
+        perror("Errore nella ricezione dei dati\n");
+        return "";
     }
     buffer[n] = '\0';
 
     return string(buffer);
-
 }
 
-string sendAlarm(string const msg, int sockfd){
-
-    string receive;
-
-    sendMsg(sockfd, msg);
-
-    receive = recvMsg(sockfd);
-    
-    return receive;
-
+void sendMsg(int socket, string msg) {
+    if (send(socket, msg.c_str(), msg.size(), 0) < 0) {
+        perror("Errore nell'invio dei dati\n");
+        return;
+    }
 }
 
-void function(int sensor_socket){
+void Control() {
+    string msg;
+    while (true) {
+        msg = rcvMsg(control_socket);
 
-    string msg, receive;
+        if (msg.find("STOP ALARM") != string::npos) {
+            int p1 = msg.find(":");
+            int id = stoi(msg.substr(p1 + 2));
 
-    int sockfd;
-    struct sockaddr_in control_addr;
-    socklen_t len = sizeof(control_addr);
-
-    sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0){
-        perror("Errore nella socket\n");
-        return;
-    }
-
-    control_addr.sin_family = AF_INET;
-    control_addr.sin_port = htons(CONTROL_PORT);
-    inet_pton(AF_INET, "127.0.0.1", &control_addr.sin_addr);
-
-    if((connect(sockfd, (struct sockaddr*)&control_addr, len)) < 0){
-        perror("Errore nella connessione con il Control Node...\n");
-        return;
-    }
-    
-    cout << "Connesso al Contro Node..." << endl;
-
-    while (true){
-
-        receive = recvMsg(sensor_socket);
-
-        int pos = receive.find(":");
-        string ID = receive.substr(7, pos - 7);
-
-        int pos1 = receive.find("|", pos + 1);
-        int temp = stoi(receive.substr(pos + 1, pos1 - pos - 1));
-
-        int pos2 = receive.find("|", pos1 + 1);
-        int hum = stoi(receive.substr(pos1 + 1, pos2 - pos1 - 1));
-
-        int air = stoi(receive.substr(pos2 + 1));
-
-        {
-
-            lock_guard<mutex> lock(CentraMutex);
-
-            SensorsMap[ID] = sensor_socket;
-        
-        }
-
-        cout << receive << endl;
-
-        msg = "Sensor " + ID + ": " + to_string(temp) + " | " + to_string(hum) + " | " + to_string(air);
-
-        if (temp > 30 || air > 70){
-
-            string id = sendAlarm(msg, sockfd);
+            int sockfd;
 
             {
-                lock_guard<mutex> lock(CentraMutex);
+                lock_guard<mutex> lock(serverMutex);
 
-                if (SensorsMap.find(id) != SensorsMap.end()){
-
-                    int socket = SensorsMap[id];
-
-                    msg = "STOP ALARM";
-
-                    sendMsg(socket, msg);
-                }
-        
+                sockfd = Sensors[id].socket;
             }
 
+            sendMsg(sockfd, "STOP ALARM");
+            cout << "Sensore " << id << " sbloccato\n";
+        }
+    }
+    close(control_socket);
+}
+
+void send_alarm(string alarm) {
+
+    socklen_t len = sizeof(control_addr);
+
+    sendMsg(control_socket, alarm);
+    cout << "ALLARME INVIATO\n";
+
+}
+
+void function(int socket) {
+    Sensor sensor;
+
+    while (true) {
+        string data = rcvMsg(socket);
+
+        cout << data << endl;
+
+        int p1 = data.find(" ");
+        int p2 = data.find(":");
+
+        int id = stoi(data.substr(p1 + 1, p2 - p1 - 1));
+
+        {
+            lock_guard<mutex> lock(serverMutex);
+
+            if (Sensors.find(id) == Sensors.end()) {
+                sensor.id = id;
+                sensor.socket = socket;
+
+                Sensors[id] = sensor;
+                cout << "Sensore " << id << " registrato\n";
+            }
+        }
+
+        p1 = data.find(" ", p2);
+        p2 = data.find(" ", p1 + 1);
+
+        int temp = stoi(data.substr(p1 + 1, p2 - p1 - 1));
+        
+        p1 = data.find(" ", p2 + 1);
+        p2 = data.find(" ", p1 + 1);
+
+        int hum = stoi(data.substr(p1 + 1, p2 - p1 - 1));
+
+        p1 = data.find(" ", p2 + 1);
+
+        string air = data.substr(p1 + 1);
+
+        if (temp > 30 || air == "POOR") {
+            cout << endl << "ALLARME RILEVATO" << endl;
+            send_alarm(data);
         }
 
     }
 
-    close(sensor_socket);
-    close(sockfd);
-
 }
 
-int main(){
+int main(int argc, char* argv[]) {
 
-    int central_socket, sensor_socket;
-    struct sockaddr_in central_addr, sensor_addr;
-    socklen_t len = sizeof(sensor_addr);
+    if (argc != 3) {
+        cout << "Usage: " << argv[0] << " <local port> <control port>\n";
+        return -1;
+    }
 
-    central_socket = socket(AF_INET, SOCK_STREAM, 0);
-    if (central_socket < 0){
+    int port = stoi(argv[1]);
+    control_port = stoi(argv[2]);
+
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd < 0) {
         perror("Errore nella socket\n");
         return -1;
     }
 
-    central_addr.sin_family = AF_INET;
-    central_addr.sin_port = htons(SENSOR_PORT);
-    central_addr.sin_addr.s_addr = INADDR_ANY;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t len = sizeof(client_addr);
 
-    if ((bind(central_socket, (struct sockaddr*)&central_addr, sizeof(central_addr))) < 0){
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(server_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
         perror("Errore nel bind\n");
         return -1;
     }
 
-    listen(central_socket, 10);
-    cout << "Central Node in ascolto...\n";
+    listen(server_fd, 10);
+    cout << "Central Node in ascolto\n";
 
-    while (true){
-
-        sensor_socket = accept(central_socket, (struct sockaddr*)&sensor_addr, &len);
-        if (sensor_socket < 0){
-            perror("Connessione con il sensore fallita...\n");
-            continue;
-        }
-        cout << "Connesso al Sensore...\n";
-
-        thread t(function, sensor_socket);
-        t.detach();
-
+    control_socket = socket(AF_INET, SOCK_STREAM, 0);
+    if (control_socket < 0) {
+        perror("Errore nella socket\n");
+        return -1;
     }
 
-    close(central_socket);
-    return 0;
+    control_addr.sin_family = AF_INET;
+    control_addr.sin_port = htons(control_port);
+    inet_pton(AF_INET, "127.0.0.1", &control_addr.sin_addr);
 
+    if (connect(control_socket, (struct sockaddr*)&control_addr, len) < 0) {
+        perror("Errore nella connessione con il control node\n");
+        return -1;
+    }
+    cout << "Connesso al Control Node\n";
+
+    thread control(Control);
+    control.detach();
+
+    int new_sockfd;
+    while (true) {
+        new_sockfd = accept(server_fd, (struct sockaddr*)&client_addr, &len);
+        if (new_sockfd < 0) {
+            perror("Errore nella connessione\n");
+            continue;
+        }
+        cout << "Sensore connesso\n";
+
+        thread sensor(function, new_sockfd);
+        sensor.detach();
+    }
+    
+    close(server_fd);
+    return 0;
 }

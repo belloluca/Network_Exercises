@@ -1,120 +1,108 @@
 #include <iostream>
-#include <string>
-#include <cstring>
 #include <unistd.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 #include <fstream>
 #include <thread>
+#include <time.h>
 
 using namespace std;
 
-#define PORT 9090
 #define BUFFER 1024
 
-void sendMsg(int socket, string const msg){
-
-    if ((send(socket, msg.c_str(), msg.size(), 0)) < 0){
-        perror("Errore nell'invio dei dati\n");
-        return;
-    }
-
-}
-
-string recvMsg(int socket){
-
+string rcvMsg(int socket) {
     char buffer[BUFFER];
-
-    int n = recv(socket, buffer, BUFFER, 0);
-    if (n < 0){
-        perror("Errore nella ricezione del messaggio\n");
-        return ""; 
+    
+    int n = recv(socket, buffer, BUFFER - 1, 0);
+    if (n <= 0) {
+        perror("Errore nella ricezione dei dati\n");
+        return "";
     }
     buffer[n] = '\0';
 
     return string(buffer);
-
 }
 
-void saveAlarm(string const alarmMsg){
-
-    ofstream file("alarm_log.txt", ios::app);
-
-    if (!file){
-        perror("Errore apertura file LOG");
+void sendMsg(int socket, string msg) {
+    if (send(socket, msg.c_str(), msg.size(), 0) < 0) {
+        perror("Errore nell'invio dei dati\n");
         return;
     }
+}
 
-    file << alarmMsg << endl;
+void send_stop(int socket, int id) {
 
-    file.close();
+    sleep(5);
+
+    sendMsg(socket, "STOP ALARM: " + to_string(id));
 
 }
 
-void function(int socket){
+void function (int socket) {
+    ofstream file("alarms.txt", ios::app);
 
-    string receive, msg;
+    while (true) {
 
-    while (true){
+        string data = rcvMsg(socket);
 
-        receive = recvMsg(socket);
+        file << data << endl;
+        file.close();
 
-        cout << "Messaggio ricevuto: " << receive << endl;
+        cout << "---ALLARME---" << endl << data << endl;
 
-        saveAlarm(receive);
+        int p1 = data.find(" ");
+        int p2 = data.find(":");
 
-        int pos = receive.find(":");
-        string id = receive.substr(7, pos - 7);
+        int id = stoi(data.substr(p1 + 1, p2 - p1 - 1));
 
-        sleep(5);
-
-        msg = id;
-        sendMsg(socket, msg);
+        thread t(send_stop, socket, id);
+        t.detach();
 
     }
-
     close(socket);
-
 }
 
-int main(){
+int main(int argc, char* argv[]) {
 
-    int central_socket, control_socket;
-    struct sockaddr_in central_addr, control_addr;
-    socklen_t len = sizeof(central_addr);
+    if (argc != 2) {
+        cout << "usage: " << argv[0] << " <port>\n";
+        return -1;
+    }
 
-    control_socket = socket(AF_INET, SOCK_STREAM, 0);
-    if (control_socket < 0){
+    int port = stoi(argv[1]);
+
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd < 0) {
         perror("Errore nella socket\n");
         return -1;
     }
 
-    control_addr.sin_family = AF_INET;
-    control_addr.sin_port = htons(PORT);
-    control_addr.sin_addr.s_addr = INADDR_ANY;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t len = sizeof(client_addr);
 
-    if ((bind(control_socket, (struct sockaddr*)&control_addr, sizeof(control_addr))) < 0){
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(server_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
         perror("Errore nel bind\n");
         return -1;
     }
 
-    listen(control_socket, 1);
-    cout << "Control Node avviato...\n";
+    listen(server_fd, 1);
+    cout << "COntrol node in ascolto\n";
 
-    central_socket = accept(control_socket, (struct sockaddr*)&central_addr, &len);
-    if (central_socket < 0){
-        perror("Errore nella connessione con il Central Node...\n");
+    int new_sockfd = accept(server_fd, (struct sockaddr*)&client_addr, &len);
+    if (new_sockfd < 0) {
+        perror("Errore nella socket del central node\n");
         return -1;
     }
 
-    
-    function(central_socket);
+    function(new_sockfd);
 
-    close(central_socket);
-    close(control_socket);
+    close(server_fd);
     return 0;
 
 }
