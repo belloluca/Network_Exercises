@@ -7,17 +7,25 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <cstring>
 
 using namespace std;
 
 mutex serverMutex;
 set<int> Sensors;
 
-#define BUFFER 1024
-
 int control_port;
 
-void send_alarm(string msg) {
+#pragma pack(push, 1)
+struct Message {
+    int id;
+    int temp;
+    int hum;
+    char air[5];
+};
+#pragma pack(pop)
+
+void send_alarm(Message alarm) {
 
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) {
@@ -37,7 +45,7 @@ void send_alarm(string msg) {
         return;
     }
 
-    if (send(sockfd, msg.c_str(), msg.size(), 0) < 0) {
+    if (send(sockfd, &alarm, sizeof(alarm), 0) < 0) {
         perror("Errore nell'invio dell'allarme\n");
         return;
     }
@@ -52,52 +60,21 @@ void function(int socket, sockaddr_in address) {
 
     socklen_t len = sizeof(address);
 
+    Message receive;
+
     while (true) {
-        char buffer[BUFFER];
-        string data;
         
-        int n = recvfrom(socket, buffer, BUFFER - 1, 0, (struct sockaddr*)&address, &len);
+        int n = recvfrom(socket, &receive, sizeof(receive), 0, (struct sockaddr*)&address, &len);
         if (n <= 0) {
             perror("Errore nella ricezione dei dati\n");
             continue;
         }
-        buffer[n] = '\0';
-
-        cout << buffer << endl;
-
-        data = buffer;
-
-        int p1 = data.find(" ");
-        int p2 = data.find(":");
-
-        int id = stoi(data.substr(p1 + 1, p2 - p1 - 1));
-
-        {
-            lock_guard<mutex> lock(serverMutex);
-
-            if (Sensors.find(id) == Sensors.end()) {
-                Sensors.insert(id);
-                cout << "Sensore " << id << " registrato\n";
-            }
-        }
-
-        p1 = data.find(" ", p2);
-        p2 = data.find(" ", p1 + 1);
-
-        int temp = stoi(data.substr(p1 + 1, p2 - p1 - 1));
         
-        p1 = data.find(" ", p2 + 1);
-        p2 = data.find(" ", p1 + 1);
+        cout << "Sensore " << receive.id << ": " << receive.temp << " | " << receive.hum << " | " << receive.air << endl;
 
-        int hum = stoi(data.substr(p1 + 1, p2 - p1 - 1));
-
-        p1 = data.find(" ", p2 + 1);
-
-        string air = data.substr(p1 + 1);
-
-        if (temp > 30 || air == "POOR") {
+        if (receive.temp > 30 || (strcmp(receive.air, "POOR") == 0)) {
             cout << endl << "ALLARME RILEVATO" << endl;
-            send_alarm(data);
+            send_alarm(receive);
         }
 
     }

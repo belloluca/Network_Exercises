@@ -10,25 +10,31 @@
 
 using namespace std;
 
-#define BUFFER 1024
+#pragma pack(push, 1)
+struct Message {
+    int id; 
+    int temp;
+    int hum;
+    char air[5];
+};
+#pragma pack(pop)
 
 void alarm(int socket) {
+    Message alarm;
 
-    char buffer[BUFFER];
     ofstream file("alarms.txt", ios::app);
 
-    int n = recv(socket, buffer, BUFFER - 1, 0);
-    if (n <= 0) {
+    int n = recv(socket, &alarm, sizeof(alarm), 0);
+    if (n < 0) {
         perror("Errore nella ricezion dei dati\n");
         return;
     }
-    buffer[n] = '\0';
 
-    file << string(buffer) << endl;
+    file << &alarm << endl;
 
     file.close();
 
-    cout << "- ALLARME - " << buffer << endl;
+    cout << " --ALLARM-- Sensore " << alarm.id << ": " << alarm.temp << " | " << alarm.hum << " | " << alarm.air << endl;
 
 }
 

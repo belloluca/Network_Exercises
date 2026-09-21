@@ -9,27 +9,39 @@
 
 using namespace std;
 
-#define BUFFER 1024
+int id;
 
-void function(int socket, string id, int central_port) {
+#pragma pack(push, 1)
+struct Message {
+    int id; // 4 byte
+    int temp; // 4 byte
+    int hum; // 4 byte
+    char air[5]; // 5 byte
+}; // 17 byte totali
+#pragma pack(pop)
+
+void function(int socket, int central_port) {
 
     sockaddr_in central_addr;
     central_addr.sin_family = AF_INET;
     central_addr.sin_port = htons(central_port);
     inet_pton(AF_INET, "127.0.0.1", &central_addr.sin_addr);
 
-    string msg;
-
     while (true) {
+        Message msg;
+
         int temp = rand() % 45;
         int hum = rand() % 100;
-        string air = rand() % 2 ? "GOOD" : "POOR";
+        const char* air = (rand() % 2) ? "GOOD" : "POOR";
 
-        msg = "Sensore " + id + ": " + to_string(temp) + " | " + to_string(hum) + " | " + air;
+        msg.id = id;
+        msg.hum = hum;
+        msg.temp = temp;
+        strncpy(msg.air, air, sizeof(msg.air));
 
-        cout << msg << endl;
+        cout << "Sensore " << msg.id << ": " << msg.temp << " | " << msg.hum << " | " << msg.air << endl;
 
-        if (sendto(socket, msg.c_str(), msg.size(), 0, (struct sockaddr*)&central_addr, sizeof(central_addr)) < 0) {
+        if (sendto(socket, &msg, sizeof(msg), 0, (struct sockaddr*)&central_addr, sizeof(central_addr)) < 0) {
             perror("Errore nell'invio dei dati\n");
             continue;
         }
@@ -49,7 +61,7 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
-    string id = argv[1];
+    int id = stoi(argv[1]);
     int port = stoi(argv[2]);
     int central_port = stoi(argv[3]);
 
@@ -73,7 +85,7 @@ int main(int argc, char* argv[]) {
     }
     cout << "Sensore " << id << " avviato\n";
 
-    function(sockfd, id, central_port);
+    function(sockfd, central_port);
 
     close(sockfd);
     return 0;
