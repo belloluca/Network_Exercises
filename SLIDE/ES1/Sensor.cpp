@@ -9,8 +9,6 @@
 
 using namespace std;
 
-int id;
-
 #pragma pack(push, 1)
 struct Message {
     int id; // 4 byte
@@ -20,7 +18,7 @@ struct Message {
 }; // 17 byte totali
 #pragma pack(pop)
 
-void function(int socket, int central_port) {
+void function(int socket, int central_port, int id) {
 
     sockaddr_in central_addr;
     central_addr.sin_family = AF_INET;
@@ -85,7 +83,7 @@ int main(int argc, char* argv[]) {
     }
     cout << "Sensore " << id << " avviato\n";
 
-    function(sockfd, central_port);
+    function(sockfd, central_port, id);
 
     close(sockfd);
     return 0;

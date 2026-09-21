@@ -69,6 +69,15 @@ void function(int socket, sockaddr_in address) {
             perror("Errore nella ricezione dei dati\n");
             continue;
         }
+
+        {
+            lock_guard<mutex> lock(serverMutex);
+
+            if (Sensors.find(receive.id) == Sensors.end()) {
+                Sensors.insert(receive.id);
+                cout << "Sensore registrato\n";
+            }
+        }
         
         cout << "Sensore " << receive.id << ": " << receive.temp << " | " << receive.hum << " | " << receive.air << endl;
 

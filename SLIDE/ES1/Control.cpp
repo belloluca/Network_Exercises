@@ -19,7 +19,7 @@ struct Message {
 };
 #pragma pack(pop)
 
-void alarm(int socket) {
+void HandleAlarm(int socket) {
     Message alarm;
 
     ofstream file("alarms.txt", ios::app);
@@ -78,7 +78,7 @@ int main(int argc, char* argv[]) {
         }
         cout << "Central Node collegato\n";
 
-        alarm(central_socket);
+        HandleAlarm(central_socket);
 
         close(central_socket);
         cout << "Central Node disconnesso\n";
