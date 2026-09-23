@@ -9,128 +9,86 @@
 #include <mutex>
 #include <map>
 #include <thread>
+#include "protocol.h"
 
 using namespace std;
-
-#define BUFFER 1024
 
 mutex serverMutex;
 
 struct User {
-    string email;
-    string password;
+    int socket;
+    char name[MAX_NAME];
+    char password[MAX_PASSWORD];
     bool logged;
     bool busy;
-    int socket;
 };
 
 map<string, User> Users;
 
-bool occupied = false;
+void manageUser(int socket, Message msg) {
+    User user;
+    Message response;
+    strncpy(response.name, "SERVER", sizeof(response.name));
 
-void sendMsg(int socket, string msg) {
-    msg += "\n";
-    if (send(socket, msg.c_str(), msg.size(), 0) < 0) {
-        perror("Errore nell'invio dei dati\n");
-    }
-}
-
-string rcvMsg(int socket) {
-    char buffer[BUFFER];
-
-    int n = recv(socket, buffer, BUFFER - 1, 0);
-    if (n <= 0) {
-        perror("Errore nella ricezione dei dati\n");
-    }
-    buffer[n] = '\0';
-
-    return string(buffer);
-}
-
-
-string manageUser(int socket, string comand) {
-    string email, password;
-
-    if (comand == "REGISTER") {
-        bool registered = false;
-        User user;
-
-        sendMsg(socket, "Inserisci email: ");
-        email = rcvMsg(socket);
-
-        while (email.empty()) {
-            sendMsg(socket, "Email incoretta");
-            sendMsg(socket, "Inserisci email: ");
-            email = rcvMsg(socket);
+    if (strcmp(msg.comand, "REGISTER") == 0) {
+        while (strcmp(msg.name, "") == 0) {
+            strncpy(response.message, "Il campo 'name' deve essere compilato", sizeof(response.message));
+            sendMsg(socket, response);
+            msg = rcvMsg(socket);
         }
-
-        sendMsg(socket, "Inserisci password: ");
-        password = rcvMsg(socket);
-
-        while (password.empty()) {
-            sendMsg(socket, "password incoretta");
-            sendMsg(socket, "Inserisci password: ");
-            password = rcvMsg(socket);
+        strncpy(user.name, msg.name, sizeof(user.name));
+        while (strcmp(msg.password, "") == 0) {
+            strncpy(response.message, "Il campo 'password' deve essere compilato", sizeof(response.message));
+            sendMsg(socket, response);
+            msg = rcvMsg(socket);
         }
 
         {
             lock_guard<mutex> lock(serverMutex);
-
-            if (Users.find(email) == Users.end()) {
-                user.email = email;
-                user.password = password;
-                user.logged = false;
+            string name = msg.name;
+            if (Users.find(name) == Users.end()) {
+                strncpy(user.name, msg.name, sizeof(MAX_NAME));
+                user.name[sizeof(user.name) - 1] = '\0';
+                strncpy(user.password, msg.password, sizeof(user.password));
                 user.busy = false;
+                user.logged = false;
                 user.socket = -1;
-                                
-                Users[email] = user;
-                cout << "Utente " << email <<  " registrato\n";
+                               
+                Users[name] = user;
+                cout << "Utente " << user.name << " registrato" << endl;
+                strncpy(response.message, "Utente registrato con successo", sizeof(response.message));
             } else {
-                registered = true;
+                strncpy(response.message, "Utente già registrato", sizeof(response.message));
             }
         }
+        sendMsg(socket, response);
 
-        if (!registered) {
-            sendMsg(socket, "Utente registrato con successo");
-            sendMsg(socket, "Comandi disponibili: LOGIN | TEXT | QUIT");
-        } else {
-            sendMsg(socket, "Utente già registrato");
+    } else if (strcmp(msg.comand, "LOGIN") == 0) {
+        while (strcmp(msg.name, "") == 0) {
+            strncpy(response.message, "Il campo 'name' deve essere compilato", sizeof(response.message));
+            sendMsg(socket, response);
+            msg = rcvMsg(socket);
+        }
+        strncpy(user.name, msg.name, sizeof(user.name));
+        while (strcmp(msg.password, "") == 0) {
+            strncpy(response.message, "Il campo 'password' deve essere compilato", sizeof(response.message));
+            sendMsg(socket, response);
+            msg = rcvMsg(socket);
         }
 
-    }
-    else if (comand == "LOGIN") {
-        bool logged = false, error = false, registered = false;
+        string name = msg.name;
 
-        sendMsg(socket, "Inserisci email: ");
-        email = rcvMsg(socket);
-
-        while (email.empty()) {
-            sendMsg(socket, "Email incoretta");
-            sendMsg(socket, "Inserisci email: ");
-            email = rcvMsg(socket);
-        }
-
-        sendMsg(socket, "Inserisci password: ");
-        password = rcvMsg(socket);
-
-        while (password.empty()) {
-            sendMsg(socket, "password incoretta");
-            sendMsg(socket, "Inserisci password:");
-            password = rcvMsg(socket);
-        }
-
+        bool logged = false, registered = false, error = false;
         {
             lock_guard<mutex> lock(serverMutex);
 
-            if (Users.find(email) != Users.end()) {
+            if (Users.find(name) != Users.end()) {
                 registered = true;
-                if (!Users[email].logged) {
-                    if (Users[email].password == password) {
-                        Users[email].logged = true;
-                        Users[email].busy = false;
-                        Users[email].socket = socket;
-
-                        cout << "Utente " << Users[email].email << " loggato\n";
+                if (!Users[name].logged) {
+                    if (strcmp(Users[name].password, msg.password) == 0) {
+                        Users[name].logged = true;
+                        Users[name].busy = false;
+                        Users[name].socket = socket;
                     } else {
                         error = true;
                     }
@@ -143,192 +101,220 @@ string manageUser(int socket, string comand) {
         if (registered) {
             if (!logged) {
                 while (error) {
-                    sendMsg(socket, "Password errata\n");
-                    sendMsg(socket, "Inserisci password: ");
-                    password = rcvMsg(socket);
-
-                    while (password.empty()) {
-                        sendMsg(socket, "password incoretta");
-                        sendMsg(socket, "Inserisci password:");
-                        password = rcvMsg(socket);
+                    strncpy(response.message, "Password errata", sizeof(response.message));
+                    sendMsg(socket, response);
+                    msg = rcvMsg(socket);
+                    while (strcmp(msg.password, "") == 0) {
+                        strncpy(response.message, "Il campo 'password' deve essere compilato", sizeof(response.message));
+                        sendMsg(socket, response);
+                        msg = rcvMsg(socket);
                     }
 
                     {
                         lock_guard<mutex> lock(serverMutex);
 
-                        if (Users[email].password == password) {
+                        if (strcmp(Users[name].password, msg.password) == 0) {
                             error = false;
-                            Users[email].logged = true;
-                            Users[email].busy = false;
-                            Users[email].socket = socket;
 
-                            cout << "Utente " << Users[email].email << " loggato\n"; 
+                            strncpy(response.message, "Utente autenticato con successo", sizeof(response.message));
+
+                            Users[name].logged = true;
+                            Users[name].busy = false;
+                            Users[name].socket = socket;
+
+                            break;
                         }
                     }
                 }
-                sendMsg(socket, "Utente autenticato\n");
-                sendMsg(socket, "Comandi disponibili: TEXT | QUIT");
+                strncpy(response.message, "Utente autenticato con successo", sizeof(response.message));
             } else {
-                sendMsg(socket, "Utente già loggato\n");
+                strncpy(response.message, "Utente già autenticato", sizeof(response.message));
             }
         } else {
-            sendMsg(socket, "Utente non registrato\n");
+            strncpy(response.message, "Utente non registrato", sizeof(response.message));
         }
+        sendMsg(socket, response);
     }
-
-    return email;
 
 }
 
-void Inoltro(int socket1, int socket2, string mittente, string dest) {
-    string msg, receive;
+void Inoltro(string mittente, int socket1, string dest, int socket2) {
+    Message msg;
 
     while (true) {
+        msg = rcvMsg(socket1);
 
-        receive = rcvMsg(socket1);
-        msg = mittente + ": " + receive;
-        sendMsg(socket2, msg);
-
-        if (receive == "QUIT") {
-            sendMsg(socket2, "Utente disconnesso");
-            cout << "Utente " << mittente << " disconnesso";
-
+        if (strcmp(msg.message, "EXIT") == 0) {
+            cout << "Chat tra " << mittente << " e " << dest << " terminata" << endl;
             {
                 lock_guard<mutex> lock(serverMutex);
 
                 Users[mittente].busy = false;
                 Users[dest].busy = false;
             }
-            occupied = false;
+            strncpy(msg.message, "Uscita dalla chat...", sizeof(msg.message));
+            sendMsg(socket1, msg);
+            sendMsg(socket2, msg);
             break;
         }
+        sendMsg(socket2, msg);
     }
 
 }
 
-void chat(int socket1, string mittente) {
+void chat(int socket, Message receive) {
+    Message msg;
 
-    string dest;
-    int socket2;
+    strncpy(msg.name, "SERVER", sizeof(msg.name));
+    strncpy(msg.message, "Con chi vuoi parlare?", sizeof(msg.message));
+    sendMsg(socket, msg);
 
-    sendMsg(socket1, "Con chi vuoi parlare?");
-    dest = rcvMsg(socket1);
+    receive = rcvMsg(socket);
 
-    while (dest.empty()) {
-        sendMsg(socket1, "Inserisci una email valida");
-        sendMsg(socket1, "Con chi vuoi parlare?");
-        dest = rcvMsg(socket1);
-    }
-
-    bool exist = false;
+    string mittente = receive.name;
+    string dest = receive.message;
+    bool exist = false, busy = false, logged = false;
+    int peer_socket;
 
     {
         lock_guard<mutex> lock(serverMutex);
 
-        if (Users.find(dest) != Users.end() && Users[dest].logged && !Users[dest].busy) {
+        if (Users.find(dest) != Users.end()) {
             exist = true;
-
-            socket2 = Users[dest].socket;
-
-            Users[mittente].busy = true;
-            Users[dest].busy = true;
-
-            occupied = true;
-
-            cout << "Chat avviata tra " << mittente << " e " << dest << endl;
+            if (Users[dest].logged) {
+                logged = true;
+                if (Users[dest].busy) {
+                    busy = true;
+                } else {
+                    peer_socket = Users[dest].socket;
+                }
+            }
         }
     }
 
     if (exist) {
-        sendMsg(socket1, "Chat avviata con " + mittente);
-        sendMsg(socket2, "Chat avviata con " + dest);
+        if (logged) {
+            if (!busy) {
+                cout << "Chat avviata tra " << mittente << " e " << dest << endl; 
+                strncpy(msg.message, "Chat avviata", sizeof(msg.message));
 
-        thread t1(Inoltro, socket1, socket2, mittente, dest);
-        thread t2(Inoltro, socket2, socket1, dest, mittente);
+                sendMsg(socket, msg);
+                sendMsg(peer_socket, msg);
 
-        t1.detach();
-        t2.detach();
+                thread t1(Inoltro, mittente, socket, dest, peer_socket);
+                thread t2(Inoltro, dest, peer_socket, mittente, socket);
+
+                {
+                    lock_guard<mutex> lock(serverMutex);
+
+                    Users[mittente].busy = true;
+                    Users[dest].busy = true;
+                }
+
+
+                t1.detach();
+                t2.detach();
+            } else {
+                strncpy(msg.message, "Utente occupato", sizeof(msg.message));
+                sendMsg(socket, msg);
+            }
+        } else {
+            strncpy(msg.message, "Utente offline", sizeof(msg.message));
+            sendMsg(socket, msg);
+        }
     } else {
-        sendMsg(socket1, "Utente inesistente");
+        strncpy(msg.message, "Utente inesistente", sizeof(msg.message));
+        sendMsg(socket, msg);
     }
+    
 
 }
 
 void handleClient(int socket) {
 
-    string comand, email;
+    Message msg;
+    Message receive;
 
-    sendMsg(socket, "Comandi disponibili: REGISTER | LOGIN | TEXT | QUIT");
-
+    strncpy(msg.name, "SERVER", sizeof(msg.name));
+    strncpy(msg.message, "Comandi disponibili: REGISTER | LOGIN | CHAT | QUIT", sizeof(msg.message));
+    sendMsg(socket, msg);
+    
     while (true) {
-        while (!Users[email].busy){
-            comand = rcvMsg(socket);
+            while (!Users[receive.name].busy){
+                receive = rcvMsg(socket);
 
-            if (comand == "LOGIN" || comand == "REGISTER") {
-                email = manageUser(socket, comand);
-            }
-            else if (comand == "TEXT") {
-                bool registered = false, logged = false, busy = false;
-                if (!email.empty()) {
-                    {
-                        lock_guard<mutex> lock(serverMutex);
+                if ((strcmp(receive.comand, "REGISTER") == 0) || (strcmp(receive.comand, "LOGIN") == 0)) {
+                    manageUser(socket, receive);
+                } else if (strcmp(receive.comand, "CHAT") == 0) {
+                    string name = receive.name;
+                    if (name.empty()) {
+                        strncpy(msg.message, "Devi prima registrarti", sizeof(msg.message));
+                        sendMsg(socket, msg);
+                        continue;
+                    } else {
+                        bool registered = false, logged = false, busy = false;
+                        {
+                            lock_guard<mutex> lock(serverMutex);
 
-                        if (Users.find(email) != Users.end()) {
-                            registered = true;
-                            if (Users[email].logged) {
-                                logged = true;
-                                if (Users[email].busy) {
-                                    busy = true;
+                            if (Users.find(name) != Users.end()) {
+                                registered = true;
+                                if (Users[name].logged) {
+                                    logged = true;
+                                    if (Users[name].busy) {
+                                        busy = true;
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    if (registered) {
-                        if (logged) {
-                            if (busy) {
-                                sendMsg(socket, "Utente già in una chat");
+                        if (registered) {
+                            if (logged) {
+                                if (!busy) {
+                                    chat(socket, receive);
+                                }
                             } else {
-                                chat(socket, email);
+                                strncpy(msg.message, "Devi prima autenticarti", sizeof(msg.message));
+                                sendMsg(socket, msg);
                             }
                         } else {
-                            sendMsg(socket, "Utente non autenticato");
+                            strncpy(msg.message, "Devi prima registrarti", sizeof(msg.message));
+                            sendMsg(socket, msg);
                         }
+                    }
+                } else if (strcmp(receive.comand, "QUIT") == 0) {
+                    string name = receive.name;
+                    if (name.empty()) {
+                        cout << "Utente disconnesso\n";
+                        strncpy(msg.message, "Arrivederci", sizeof(msg.message));
+                        sendMsg(socket, msg);
+                        close(socket);
+                        return;
                     } else {
-                        sendMsg(socket, "Utente non registrato");
+                        {
+                            lock_guard<mutex> lock(serverMutex);
+                            if (Users.find(name) != Users.end()) {
+                                strncpy(msg.message, "Arrivederci", sizeof(msg.message));
+                                sendMsg(socket, msg);
+
+                                Users[name].logged = false;
+                                Users[name].busy = false;
+                                Users[name].socket = -1;
+
+                                cout << "Utente " << name << " disconnesso" << endl;
+                                return;
+                            }
+                        }
                     }
                 } else {
-                    sendMsg(socket, "Email non valida");
+                    strncpy(msg.name, "SERVER", sizeof(msg.name));
+                    strncpy(msg.message, "Comando non disponibile", sizeof(msg.message));
+                    sendMsg(socket, msg);
                 }
-            }
-            else if (comand == "QUIT") {
-                bool exist = false;
-                {
-                    lock_guard<mutex> lock(serverMutex);
-
-                    if (!email.empty()) {
-                        if (Users.find(email) != Users.end()) {
-                            cout << "Utente " << email << " disconnesso\n";
-
-                            Users[email].busy = false;
-                            Users[email].logged = false;
-                            Users[email].socket = -1;
-                        }
-                    } else {
-                        cout << "Utente disconnesso\n";
-                    }
-                }
-
-                sendMsg(socket, "Arrivederci");
-                occupied = false;
-                break;
-            }
-            else {
-                sendMsg(socket, "Comando non disponibile");
-            }
-
+            
+        }
     }
-    }
+
+    close(socket);
 
 }
 
@@ -341,14 +327,15 @@ int main(int argc, char* argv[]) {
 
     int port = stoi(argv[1]);
 
-    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    int server_fd, new_sockfd;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t len = sizeof(client_addr);
+
+    server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {
         perror("Errore nella socket\n");
         return -1;
     }
-
-    struct sockaddr_in server_addr, client_addr;
-    socklen_t len = sizeof(client_addr);
 
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
@@ -362,11 +349,10 @@ int main(int argc, char* argv[]) {
     listen(server_fd, 10);
     cout << "Server in ascolto\n";
 
-    int new_sockfd;
     while (true) {
         new_sockfd = accept(server_fd, (struct sockaddr*)&client_addr, &len);
         if (new_sockfd < 0) {
-            perror("Errore nella connessione con il client\n");
+            perror("Errore nella connessione\n");
             continue;
         }
         cout << "Client connesso\n";
@@ -377,4 +363,5 @@ int main(int argc, char* argv[]) {
 
     close(server_fd);
     return 0;
+
 }

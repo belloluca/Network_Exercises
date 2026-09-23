@@ -1,81 +1,135 @@
 #include <iostream>
-#include <string>
+#include <stdlib.h>
+#include <unistd.h>
 #include <cstring>
+#include <string>
+#include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-#include <stdlib.h>
 #include <thread>
+#include "protocol.h"
 
 using namespace std;
 
-#define PORT 8080
-#define BUFFER 1024
+int sockfd;
+char name[MAX_NAME];
+bool chatting = false;
 
-void sendMsg(int socket){
+void viewMessage() {
+    while (true) {
+        Message msg = rcvMsg(sockfd);
 
-    string msg;
+        cout << msg.name << ": " << msg.message << endl;
 
-    while (true){
-
-        getline(cin, msg);
-
-        if ((send(socket, msg.c_str(), msg.size(), 0)) < 0){
-            perror("Errore nell'invio dei dati\n");
+        if (strcmp(msg.message, "Arrivederci") == 0) {
             return;
         }
 
+        if (strcmp(msg.message, "Chat avviata") == 0) {
+            chatting = true;
+        }
     }
-
 }
 
-void recvMsg(int socket){
+void response() {
+    Message msg;
+    cout << "Per la registrazione: <comando> <password>" << endl;
+    cout << "Per creare una chat: CHAT <dest>" << endl;
+    cout << "Per uscire: QUIT" << endl;
 
-    while (true){
+    while (true) {
+        string line;
+        getline(cin, line);
 
-        char buffer[BUFFER];
-        int n;
+        memset(&msg, 0, sizeof(Message));
 
-        n = recv(socket, buffer, BUFFER, 0);
-        if (n <= 0){
-            perror("Errore nella ricezione dei dati\n");
+        strncpy(msg.name, name, sizeof(msg.name));
+
+        int p1 = line.find(" ");
+
+        if (chatting) {
+            if (line == "EXIT") {
+                chatting = false;
+            }
+            strncpy(msg.message, line.c_str(), sizeof(msg.message));
+            sendMsg(sockfd, msg);
+            continue;
+        }
+
+        string comand = line.substr(0, p1);
+        strncpy(msg.comand, comand.c_str(), sizeof(msg.comand));
+        msg.comand[sizeof(msg.comand) - 1] = '\0';
+
+        if (comand == "LOGIN" || comand == "REGISTER"){
+            string password = line.substr(p1 + 1);
+            if (line.find(" ") != string::npos) {
+                strncpy(msg.password, password.c_str(), sizeof(msg.password));
+            } else {
+                password = "";
+                strncpy(msg.password, password.c_str(), sizeof(msg.password));
+                msg.password[sizeof(msg.password) - 1] = '\0';
+            }
+        } else if (comand == "CHAT") {
+            string message = line.substr(p1 + 1);
+            if (line.find(" ") != string::npos) {
+                strncpy(msg.message, message.c_str(), sizeof(msg.message));
+            } else {
+                message = "";
+                strncpy(msg.message, message.c_str(), sizeof(msg.message));
+                msg.message[sizeof(msg.message) - 1] = '\0';
+            }
+        } else if (comand == "QUIT") {
+            cout << "Disconnessione" << endl;
+            sendMsg(sockfd, msg);
             return;
         }
-        buffer[n] = '\0';
 
-        cout << buffer << endl;
-
+        sendMsg(sockfd, msg);
     }
-
 }
 
-int main(){
+int main(int argc, char* argv[]) {
 
-    int sockfd;
-    struct sockaddr_in server_addr;
-    socklen_t len = sizeof(server_addr);
+    if (argc != 2) {
+        cout << "Usage: " << argv[0] << ": <server port>\n";
+        return -1;
+    } 
+
+    int port = stoi(argv[1]);
 
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0){
+    if (sockfd < 0) {
         perror("Errore nella socket\n");
         return -1;
     }
 
+    struct sockaddr_in server_addr;
+    socklen_t len = sizeof(server_addr);
+
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(PORT);
+    server_addr.sin_port = htons(port);
     inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr);
 
-    if((connect(sockfd, (struct sockaddr*)&server_addr, len)) < 0){
-        perror("Errore nella connessione con il server\n");
+    if (connect(sockfd, (struct sockaddr*)&server_addr, len) < 0) {
+        perror("Errore nella connessione\n");
         return -1;
-    }
-    cout << "Client connesso al server...\n";
+    } 
+    cout << "Client connesso al server\n";
 
-    thread ricezione(recvMsg, sockfd);
-    thread invio(sendMsg, sockfd);
+    cout << "Inserisci il tuo nome: ";
+    cin >> name;
+    cout << endl;
+    cout.flush();
+    cin.ignore();
 
-    ricezione.join();
-    invio.join();
+
+    thread t2(response);
+    t2.detach();
+
+    thread t1(viewMessage);
+    t1.join();
+
+    close(sockfd);
+    return 0;
 
 }
