@@ -1,66 +1,72 @@
 #include <iostream>
 #include <cstring>
-#include <string>
-#include <fstream>
-#include <arpa/inet.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <fstream>
+#include <mutex>
+#include "protocol.h"
 
 using namespace std;
 
-#pragma pack(push, 1)
-struct Message {
-    int id; 
-    int temp;
-    int hum;
-    char air[5];
-};
-#pragma pack(pop)
+mutex serverMutex;
 
-void HandleAlarm(int socket) {
-    Message alarm;
+struct sockaddr_in server_addr, client_addr;
+int server_fd, new_sockfd;
 
-    ofstream file("alarms.txt", ios::app);
+Message rcvMsg() {
+    Message msg;
 
-    int n = recv(socket, &alarm, sizeof(alarm), 0);
-    if (n < 0) {
-        perror("Errore nella ricezion dei dati\n");
-        return;
+    int n = recv(new_sockfd, &msg, sizeof(msg), 0);
+    if (n != sizeof(msg)) {
+        perror("Errore nella ricezione dei messaggi");
     }
 
-    file << &alarm << endl;
+    return msg;
+}
 
-    file.close();
+void function() {
+    ofstream file("alarm.txt", ios::app);
+    Message msg;
 
-    cout << " --ALLARM-- Sensore " << alarm.id << ": " << alarm.temp << " | " << alarm.hum << " | " << alarm.air << endl;
+    while (true) {
+        msg = rcvMsg();
+
+        cout << "|ALLARME| Sensore " << msg.id << ": " << msg.temp << " | " << msg.hum << " | " << msg.air << endl;
+
+        {
+            lock_guard<mutex> lock(serverMutex);
+
+            file << "Sensore " << msg.id << ": " << msg.temp << " | " << msg.hum << " | " << msg.air << endl;
+
+            file.close();
+        }
+    }
 
 }
 
 int main(int argc, char* argv[]) {
 
     if (argc != 2) {
-        cout << "Usage " << argv[0] << " <local_port>\n";
+        cout << "usage: " << argv[0] << " <local port>\n";
         return -1;
     }
 
     int port = stoi(argv[1]);
 
-    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {
         perror("Errore nella socket\n");
         return -1;
     }
 
-    struct sockaddr_in control_addr, central_addr;
-    socklen_t len = sizeof(central_addr);
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+    server_addr.sin_addr.s_addr = INADDR_ANY;
 
-    control_addr.sin_family = AF_INET;
-    control_addr.sin_port = htons(port);
-    control_addr.sin_addr.s_addr = INADDR_ANY;
-
-    if (bind(server_fd, (struct sockaddr*)&control_addr, sizeof(control_addr)) < 0) {
+    if (bind(server_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
         perror("Errore nel bind\n");
         return -1;
     }
@@ -68,23 +74,18 @@ int main(int argc, char* argv[]) {
     listen(server_fd, 1);
     cout << "Control Node in ascolto\n";
 
-    int central_socket;
-
-    while (true) {
-        central_socket = accept(server_fd, (struct sockaddr*)&central_addr, &len);
-        if (central_socket < 0) {
-            perror("Errore nella connessione\n");
-            continue;
-        }
-        cout << "Central Node collegato\n";
-
-        HandleAlarm(central_socket);
-
-        close(central_socket);
-        cout << "Central Node disconnesso\n";
+    socklen_t len = sizeof(client_addr);
+    new_sockfd = accept(server_fd, (struct sockaddr*)&client_addr, &len);
+    if (new_sockfd < 0) {
+        perror("Errore nella connessione sul Central Node\n");
+        return -1;
     }
+    cout << "Central Node connesso\n";
+
+    function();
 
     close(server_fd);
+    close(new_sockfd);
     return 0;
 
 }
