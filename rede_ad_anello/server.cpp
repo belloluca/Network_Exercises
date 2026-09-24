@@ -1,24 +1,23 @@
+#include <iostream>
 #include <stdlib.h>
 #include <unistd.h>
+#include <cstring>
+#include <thread>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <string>
-#include <cstring>
-#include <iostream>
+#include "protocol.h"
 
 using namespace std;
 
-#define BUFFER 1024
+#define PORT 8080
 
 int main(int argc, char* argv[]) {
 
-    if (argc != 2) {
-        cout << "usage: " << argv[0] << " <local port>\n";
+    if (argc != 1) {
+        cout << "usage: " << argv[0] << endl;
         return -1;
     }
-
-    int port = stoi(argv[1]);
 
     int server_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (server_fd < 0) {
@@ -27,28 +26,23 @@ int main(int argc, char* argv[]) {
     }
 
     struct sockaddr_in server_address, client_address;
-    socklen_t len = sizeof(client_address);
-    
     server_address.sin_family = AF_INET;
-    server_address.sin_port = htons(port);
+    server_address.sin_port = htons(PORT);
     server_address.sin_addr.s_addr = INADDR_ANY;
 
-    if (bind(server_fd, (struct sockaddr*)&server_address, len) < 0) {
+    if (bind(server_fd, (struct sockaddr*)&server_address, sizeof(server_address)) < 0) {
         perror("Errore nel bind\n");
         return -1;
     }
     cout << "Server in ascolto\n";
 
-    char buffer[BUFFER];
+    Message msg;
     while (true) {
-        int n = recvfrom(server_fd, buffer, BUFFER - 1, 0, (struct sockaddr*)&client_address, &len);
-        if (n < 0) {
-            perror("Errore nella ricezione dei dati\n");
-            continue;
-        }
-        buffer[n] = '\0';
+        memset(&msg, '\0', sizeof(msg));
+        msg = rcvMsg(server_fd, client_address);
 
-        cout << buffer << endl;
+        cout << "Nodo " << msg.id << " a " << msg.dest << ": " << msg.content << endl;
+
     }
 
     close(server_fd);
